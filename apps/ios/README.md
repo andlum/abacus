@@ -59,3 +59,41 @@ A simulator reaches a server on the Mac at `http://localhost:<port>`.
 
 The token is kept in the Keychain on this device only. The server address is
 kept in `UserDefaults`.
+
+## Release to TestFlight
+
+You need a paid Apple Developer Program membership. The project has no team
+and no secrets in it, because this repository is public; you add your own in
+Xcode and keep them out of commits.
+
+1. **Pick the team.** Select the `Abacus` target → Signing & Capabilities and
+   choose your team. Xcode writes `DEVELOPMENT_TEAM` into
+   `project.pbxproj`; don't commit that line.
+2. **Check the bundle ID.** It must be one your team can register. Today it is
+   `app.abacus.ios`. If Xcode says it is taken, change
+   `PRODUCT_BUNDLE_IDENTIFIER` to one of your own (say `com.example.clementine`)
+   and keep that change local too.
+3. **Create the app record.** In App Store Connect → Apps → New App, choose
+   iOS, a name, the same bundle ID, and any SKU.
+4. **Bump the build number.** Every upload needs a higher
+   `CURRENT_PROJECT_VERSION` than the last one for the same
+   `MARKETING_VERSION` (today 0.1, build 1). Raise `MARKETING_VERSION` for a
+   new release.
+5. **Archive.** Choose "Any iOS Device (arm64)" as the run destination, then
+   Product → Archive.
+6. **Upload.** In the Organizer window that opens, pick the archive →
+   Distribute App → App Store Connect → Upload. App Store Connect takes a few
+   minutes to process it and emails you when it is ready.
+7. **Add testers.** In App Store Connect → your app → TestFlight, add
+   internal testers (people on your App Store Connect team, no review needed)
+   or an external group.
+
+The upload doesn't ask about export compliance:
+`INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO` is set in both build
+configurations, because the app only uses the system's HTTPS. Revisit it if
+the app ever adds its own encryption.
+
+External testers need Beta App Review. The reviewer has to sign in, so the
+review notes must give a server address they can reach (not `localhost`) and
+a token for a demo group with invented data. Make the token under Settings →
+Devices and revoke it once the review is done.
