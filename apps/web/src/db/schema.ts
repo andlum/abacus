@@ -925,3 +925,18 @@ export const expenseChange = pgTable(
 );
 
 export type ExpenseChange = typeof expenseChange.$inferSelect;
+
+// One row per UTC day for the operator's daily email (src/lib/ops-report.ts).
+// The row is claimed before the mail goes out, so two machines running the
+// daily job send one email between them; sent_at stays empty if sending
+// failed, and the claim can be taken again after a while.
+export const opsReport = pgTable("ops_report", {
+  day: date("day").primaryKey(),
+  periodStart: timestamp("period_start", { withTimezone: true }).notNull(),
+  periodEnd: timestamp("period_end", { withTimezone: true }).notNull(),
+  counts: jsonb("counts").$type<Record<string, number>>(),
+  claimedAt: timestamp("claimed_at", { withTimezone: true }).notNull(),
+  sentAt: timestamp("sent_at", { withTimezone: true }),
+});
+
+export type OpsReport = typeof opsReport.$inferSelect;

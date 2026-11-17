@@ -145,6 +145,22 @@ stops the job, because a stopped server runs no timers. On such a host,
 request `/api/health` once a day from a scheduler (a cron job, a scheduled
 GitHub Actions workflow): that starts the server, and the job runs on start.
 
+### The ops email
+
+Set `ABACUS_OPS_EMAIL` to get one email a day from the job: sign-ups since
+the last email and how many never confirmed their address, groups created,
+invite emails sent, the most of each by any one account, and how the job's
+own run went. It leads with warnings when something looks wrong: sign-ups at
+or above `ABACUS_OPS_SIGNUP_ALERT` (default 20), five or more sign-ups with
+most unconfirmed, one account reaching a daily ceiling, or a failed posting
+or bank sync. It holds counts only, never names or addresses.
+
+It goes out on the first run of each UTC day, so on a host that stops when
+idle it arrives with the daily wake-up. The `ops_report` table keeps one row
+per day, which stops a second server sending it twice; a failed send is tried
+again on a run at least half an hour later. It uses the same `SMTP_URL` as
+sign-in mail.
+
 ## Connect a bank (optional)
 
 Abacus can pull purchases from a bank through Plaid. It is off until you set

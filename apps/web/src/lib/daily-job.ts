@@ -100,6 +100,19 @@ export async function startDailyJob(env = process.env) {
       const s = await runDailyJob(getDb(), new Date(), bankRuntime(env));
       console.log(`daily job: groups ${s.groups}, recurring costs posted ${s.posted}, failed ${s.failed}`);
       if (s.bank) console.log(`daily job: banks synced ${s.bank.synced}, need re-linking ${s.bank.needsRelink}, failed ${s.bank.failed}`);
+
+      const { opsSettings, sendOpsReport } = await import("./ops-report.ts");
+      const ops = opsSettings(env);
+      if (!ops) return;
+      try {
+        const { createMailer } = await import("./mail.ts");
+        const { inviteLimits } = await import("./invite-limits.ts");
+        if ((await sendOpsReport(getDb(), createMailer(env), ops, new Date(), s, inviteLimits(env))) === "sent") {
+          console.log("daily job: ops email sent");
+        }
+      } catch (e) {
+        console.error(`daily job: ops email failed: ${message(e)}`);
+      }
     },
     { firstDelayMs: DAILY_JOB_FIRST_DELAY_MS, everyMs: DAILY_JOB_EVERY_MS },
   );
