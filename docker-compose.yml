@@ -1,0 +1,23 @@
+# Local development database only.
+#
+# The name is fixed so that every checkout and git worktree shares one
+# container and one volume, rather than leaving a new pair behind each.
+name: abacus
+services:
+  db:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: abacus
+      POSTGRES_PASSWORD: abacus
+      POSTGRES_DB: abacus
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "abacus"]
+      interval: 2s
+      timeout: 5s
+      retries: 15
+    volumes:
+      - abacus-db:/var/lib/postgresql/data
+volumes:
+  abacus-db:

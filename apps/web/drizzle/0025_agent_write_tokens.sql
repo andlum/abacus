@@ -1,0 +1,2 @@
+ALTER TABLE "mcp_token" DROP CONSTRAINT "mcp_token_permission";--> statement-breakpoint
+ALTER TABLE "mcp_token" ADD CONSTRAINT "mcp_token_permission" CHECK ("mcp_token"."permission" in ('read', 'propose', 'write'));

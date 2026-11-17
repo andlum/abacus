@@ -1,0 +1,4 @@
+ALTER TABLE "expense_template" DROP CONSTRAINT "expense_template_cadence";--> statement-breakpoint
+ALTER TABLE "expense_template" DROP CONSTRAINT "expense_template_month";--> statement-breakpoint
+ALTER TABLE "expense_template" ADD CONSTRAINT "expense_template_cadence" CHECK ("expense_template"."cadence" in ('monthly', 'quarterly', 'half_yearly', 'yearly'));--> statement-breakpoint
+ALTER TABLE "expense_template" ADD CONSTRAINT "expense_template_month" CHECK (("expense_template"."cadence" <> 'monthly' and "expense_template"."month_of_year" between 1 and 12) or ("expense_template"."cadence" = 'monthly' and "expense_template"."month_of_year" is null));

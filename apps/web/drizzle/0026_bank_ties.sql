@@ -1,0 +1,2 @@
+ALTER TABLE "bank_transaction" ADD COLUMN "no_auto_tie" boolean DEFAULT false NOT NULL;--> statement-breakpoint
+CREATE UNIQUE INDEX "bank_transaction_one_tie" ON "bank_transaction" USING btree ("expense_id") WHERE "bank_transaction"."state" = 'added';

@@ -1,0 +1,76 @@
+# Runs Abacus and its database on one machine. See docs/self-hosting.md.
+#
+#   cp .env.selfhost.example .env
+#   docker compose -f docker-compose.selfhost.yml up -d --build
+#
+# docker-compose.yml, next to this file, is only the database for local
+# development.
+name: abacus
+
+x-app: &app
+  build: .
+  environment:
+    DATABASE_URL: postgres://abacus:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@db:5432/abacus
+    BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:?set BETTER_AUTH_SECRET in .env}
+    BETTER_AUTH_URL: ${BETTER_AUTH_URL:?set BETTER_AUTH_URL in .env}
+    SMTP_URL: ${SMTP_URL:?set SMTP_URL in .env}
+    MAIL_FROM: ${MAIL_FROM:?set MAIL_FROM in .env}
+    ABACUS_OPEN_SIGNUP: ${ABACUS_OPEN_SIGNUP:-}
+    ABACUS_MAX_GROUPS_PER_DAY: ${ABACUS_MAX_GROUPS_PER_DAY:-}
+    ABACUS_MAX_INVITE_EMAILS_PER_DAY: ${ABACUS_MAX_INVITE_EMAILS_PER_DAY:-}
+    ABACUS_MAX_INVITE_EMAILS_PER_ADDRESS: ${ABACUS_MAX_INVITE_EMAILS_PER_ADDRESS:-}
+    ABACUS_MAX_OPEN_INVITES: ${ABACUS_MAX_OPEN_INVITES:-}
+    # Behind a proxy, the header it sets to the real client address (x-real-ip
+    # for nginx). Empty: no header is trusted and all visitors share one limit.
+    ABACUS_CLIENT_IP_HEADER: ${ABACUS_CLIENT_IP_HEADER:-}
+    ABACUS_DAILY_JOB: ${ABACUS_DAILY_JOB:-}
+    # Optional: connecting a bank (see .env.selfhost.example).
+    PLAID_CLIENT_ID: ${PLAID_CLIENT_ID:-}
+    PLAID_SECRET: ${PLAID_SECRET:-}
+    PLAID_ENV: ${PLAID_ENV:-}
+    ABACUS_ENCRYPTION_KEY: ${ABACUS_ENCRYPTION_KEY:-}
+
+services:
+  # Not published to the host: only the app reaches it.
+  db:
+    image: postgres:17
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: abacus
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: abacus
+    volumes:
+      - abacus-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U abacus -d abacus"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  # Applies pending migrations, then exits. The app waits for it, so an
+  # upgrade never serves new code against an old schema.
+  migrate:
+    <<: *app
+    command: ["node", "scripts/migrate.ts"]
+    restart: "no"
+    depends_on:
+      db:
+        condition: service_healthy
+
+  app:
+    <<: *app
+    restart: unless-stopped
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    ports:
+      - "${ABACUS_BIND:-127.0.0.1}:${ABACUS_PORT:-3000}:3000"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/api/health').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
+
+volumes:
+  abacus-data:

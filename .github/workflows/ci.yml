@@ -1,0 +1,80 @@
+# Type-checks, tests and builds every pull request, and main after each merge.
+# Also fails when src/db/schema.ts has a change no migration carries, and runs
+# the Playwright story against a throwaway Postgres.
+#
+# No secrets are used here: this job runs every dependency's code.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    # A healthy run takes under 10 minutes; one hung in `pnpm test` for 17.
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
+        with:
+          version: 11
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      - run: pnpm test
+      - name: Every schema change has its migration
+        run: |
+          pnpm db:generate
+          if [ -n "$(git status --porcelain apps/web/drizzle)" ]; then
+            git status --short apps/web/drizzle
+            echo "::error::src/db/schema.ts has changes with no migration. Run pnpm db:generate and commit the result."
+            exit 1
+          fi
+      - run: pnpm build
+
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      # The same database `pnpm db:up` starts locally (docker-compose.yml).
+      db:
+        image: postgres:17
+        env:
+          POSTGRES_USER: abacus
+          POSTGRES_PASSWORD: abacus
+          POSTGRES_DB: abacus
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U abacus"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
+        with:
+          version: 11
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @abacus/web exec playwright install --with-deps chromium
+      - run: pnpm e2e

@@ -1,0 +1,1 @@
+ALTER TABLE "member" ADD COLUMN "shares_from" date DEFAULT '1970-01-01';

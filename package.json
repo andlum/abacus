@@ -1,0 +1,22 @@
+{
+  "name": "abacus-workspace",
+  "private": true,
+  "type": "module",
+  "license": "MIT",
+  "engines": {
+    "node": ">=22.18"
+  },
+  "scripts": {
+    "dev": "pnpm --filter @abacus/web dev",
+    "build": "pnpm --filter @abacus/web build",
+    "test": "pnpm -r --if-present test",
+    "typecheck": "pnpm -r --if-present typecheck",
+    "e2e": "pnpm --filter @abacus/web e2e",
+    "check:live": "pnpm --filter @abacus/web check:live",
+    "db:up": "docker compose up -d db",
+    "db:counts": "pnpm --filter @abacus/web db:counts",
+    "db:generate": "pnpm --filter @abacus/web db:generate",
+    "db:migrate": "pnpm --filter @abacus/web db:migrate",
+    "db:provision": "pnpm --filter @abacus/web db:provision"
+  }
+}

@@ -1,0 +1,285 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+
+/* Clementine theme: dark grove green and clementine orange. By day, a
+   pith-white ground with green ink, orange for the one thing a screen is
+   for, and cards with a green edge and a green shadow set off to one side;
+   by night, the grove itself, with orange for action and links.
+
+   Each colour is a light-dark() pair, chosen by color-scheme. That follows
+   the system until someone flips the switch in the header, which sets
+   data-theme on <html> (and a cookie, so the server renders it too). */
+@custom-variant dark {
+  &:where([data-theme="dark"], [data-theme="dark"] *) { @slot; }
+  @media (prefers-color-scheme: dark) {
+    &:where(:root:not([data-theme="light"]), :root:not([data-theme="light"]) *) { @slot; }
+  }
+}
+:root {
+  color-scheme: light dark;
+  accent-color: var(--primary);
+  --grove: #13261F;
+  --pith: #FFF4E2;
+  --background: light-dark(var(--pith), var(--grove));
+  --foreground: light-dark(var(--grove), var(--pith));
+  --card: light-dark(#FFFFFF, #1C3A2E);
+  --card-foreground: var(--foreground);
+  --popover: light-dark(#FFFFFF, #1F3F32);
+  --popover-foreground: var(--foreground);
+  --primary: #F07A1A;
+  --primary-foreground: var(--grove);
+  /* The selected tab: dark green by day, orange-on-green at night. */
+  --secondary: light-dark(#1F4A38, #2E5A47);
+  --secondary-foreground: var(--pith);
+  --muted: light-dark(#F7E6CC, #1A3328);
+  --muted-foreground: light-dark(#4A5A40, #D9CBB3);
+  --accent: light-dark(#FCEBCF, #24453A);
+  --accent-foreground: var(--foreground);
+  --destructive: light-dark(#B3261E, #FF8A7A);
+  --border: light-dark(#E5CBA2, rgb(255 244 226 / 14%));
+  --input: light-dark(#C9A87E, rgb(255 244 226 / 26%));
+  --ring: #F07A1A;
+  --title: light-dark(var(--grove), var(--pith));
+  --edge: light-dark(var(--grove), rgb(255 244 226 / 22%));
+  --leaf: light-dark(#2F6B3A, #F79A4A);
+  --success: light-dark(#2F6B3A, #8CC79A);
+  --success-soft: light-dark(#E1EFD9, #1F4D2A);
+  --warn: light-dark(#9A4A06, #F79A4A);
+  --warn-soft: light-dark(#FCE3BF, #4A2E14);
+  --danger-soft: light-dark(#FBE0DA, #4A2320);
+  --chart-1: #F07A1A;
+  --chart-2: light-dark(#1F4A38, #8CC79A);
+  --chart-3: #F7A35C;
+  --chart-4: light-dark(#5E9E6E, #4F8A62);
+  --chart-5: #C2560A;
+  --radius: 1rem;
+  --mist: light-dark(color-mix(in oklch, #F07A1A 18%, transparent), color-mix(in oklch, #F07A1A 14%, transparent));
+  --shadow-soft: 4px 4px 0 light-dark(#1F4A38, rgb(0 0 0 / 35%));
+  --shadow-float: 6px 6px 0 light-dark(#1F4A38, rgb(0 0 0 / 35%)), 0 24px 48px -20px light-dark(rgb(19 38 31 / 25%), rgb(0 0 0 / 60%));
+  --sidebar: var(--card);
+  --sidebar-foreground: var(--foreground);
+  --sidebar-primary: var(--primary);
+  --sidebar-primary-foreground: var(--primary-foreground);
+  --sidebar-accent: var(--accent);
+  --sidebar-accent-foreground: var(--accent-foreground);
+  --sidebar-border: var(--border);
+  --sidebar-ring: var(--ring);
+}
+:root[data-theme="light"] { color-scheme: light; }
+:root[data-theme="dark"] { color-scheme: dark; }
+@theme inline {
+  /* Figtree for reading; Fraunces, heavy and soft, for titles and totals. */
+  --font-sans: var(--font-figtree), ui-sans-serif, system-ui, sans-serif;
+  --font-serif: var(--font-fraunces), ui-serif, Georgia, serif;
+  --font-heading: var(--font-sans);
+  --shadow-soft: var(--shadow-soft);
+  --shadow-float: var(--shadow-float);
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar: var(--sidebar);
+  --color-chart-5: var(--chart-5);
+  --color-chart-4: var(--chart-4);
+  --color-chart-3: var(--chart-3);
+  --color-chart-2: var(--chart-2);
+  --color-chart-1: var(--chart-1);
+  --color-ring: var(--ring);
+  --color-title: var(--title);
+  --color-edge: var(--edge);
+  --color-leaf: var(--leaf);
+  --color-success: var(--success);
+  --color-success-soft: var(--success-soft);
+  --color-warn: var(--warn);
+  --color-warn-soft: var(--warn-soft);
+  --color-danger-soft: var(--danger-soft);
+  --color-input: var(--input);
+  --color-border: var(--border);
+  --color-destructive: var(--destructive);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-accent: var(--accent);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-muted: var(--muted);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-secondary: var(--secondary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary: var(--primary);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-popover: var(--popover);
+  --color-card-foreground: var(--card-foreground);
+  --color-card: var(--card);
+  --color-foreground: var(--foreground);
+  --color-background: var(--background);
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.4);
+  --radius-2xl: calc(var(--radius) * 1.8);
+  --radius-3xl: calc(var(--radius) * 2.2);
+  --radius-4xl: calc(var(--radius) * 2.6);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply min-h-dvh bg-background text-foreground antialiased;
+    /* An orange glow at the top that fades out down the page. */
+    background-image: radial-gradient(120% 28rem at 50% -8rem, var(--mist), transparent 70%);
+    background-repeat: no-repeat;
+    text-rendering: optimizeLegibility;
+  }
+  /* Fraunces with its corners rounded off, wherever it is used. */
+  .font-serif, .wordmark { font-variation-settings: "SOFT" 100; }
+  .wordmark { @apply font-serif font-black tracking-tight text-title; }
+  ::selection {
+    background: color-mix(in oklch, var(--primary) 22%, transparent);
+  }
+  button:not(:disabled), [role="button"]:not(:disabled) {
+    cursor: pointer;
+  }
+  html {
+    @apply font-sans;
+  }
+}
+/* Plain HTML in the pages gets the same look as the shadcn components.
+   Anything rendered by a component carries `data-slot` and is left alone. */
+@layer components {
+  /* Pages outside the Shell (sign-in, not invited) sit in a narrow column. */
+  main { @apply mx-auto max-w-md px-4 py-20; }
+  main h1 { @apply mb-5 font-serif text-4xl leading-tight font-black tracking-tight text-balance text-title; font-variant-numeric: lining-nums; }
+  main h2 { @apply mt-12 mb-3 font-serif text-2xl font-black tracking-tight text-title; }
+  /* A title can print a description or a name someone typed, one word longer
+     than a phone's screen: it breaks instead of widening the page. */
+  main h1, main h2, main h3 { overflow-wrap: anywhere; }
+  main h3 { @apply mt-6 mb-2 text-base font-semibold; }
+  main p { @apply my-2 leading-relaxed; }
+  main ul:not([data-slot]) { @apply my-2 list-disc pl-5 space-y-1; }
+  main a:not([data-slot]) { @apply underline decoration-foreground/20 underline-offset-4 transition-colors hover:decoration-leaf hover:text-leaf; }
+
+  /* Tables are soft panels: quiet column labels, hairlines between rows.
+     Separate borders so the panel can have rounded corners. */
+  main table:not([data-slot]) { @apply my-4 w-full border-separate border-spacing-0 rounded-xl border-2 border-edge bg-card text-sm shadow-soft; }
+  main table:not([data-slot]) th,
+  main table:not([data-slot]) td { @apply border-b border-border/70 px-4; }
+  main table:not([data-slot]) th { @apply text-left align-middle font-medium; }
+  main table:not([data-slot]) td { @apply py-3 align-top; }
+  main table:not([data-slot]) thead th { @apply h-11 text-xs font-medium text-muted-foreground; }
+  main table:not([data-slot]) caption { @apply mb-2 text-left text-sm text-muted-foreground; }
+  main table:not([data-slot]) tr:last-child > * { @apply border-b-0; }
+  main table:not([data-slot]) thead tr:last-child > * { @apply border-b; }
+  main table:not([data-slot]) tbody:has(+ tfoot) tr:last-child > * { @apply border-b; }
+  main table:not([data-slot]) tfoot > tr:last-child > * { @apply border-b-0; }
+  main table:not([data-slot]) tfoot th,
+  main table:not([data-slot]) tfoot td { @apply py-3.5 font-semibold; }
+  main table:not([data-slot]) th.num { @apply text-right; }
+  main table:not([data-slot]) tbody tr td { @apply transition-colors; }
+  main table:not([data-slot]) tbody tr:hover td { @apply bg-accent/50; }
+  main table:not([data-slot]) tbody tr:last-child td:first-child { @apply rounded-bl-xl; }
+  main table:not([data-slot]) tbody tr:last-child td:last-child { @apply rounded-br-xl; }
+  main table:not([data-slot]) tbody:has(+ tfoot) tr:last-child td { @apply rounded-none; }
+  main table:not([data-slot]) td:first-child { @apply whitespace-nowrap; }
+  /* A cell of typed text (a description, a name) breaks a long word rather
+     than stretching its column; wide enough that ordinary words stay whole. */
+  main table:not([data-slot]) td.wrap { @apply min-w-40; overflow-wrap: anywhere; }
+  /* On a phone a wide table scrolls inside its panel instead of the page. */
+  @media (width < 40rem) {
+    main table:not([data-slot]) { @apply block overflow-x-auto; }
+  }
+  .num { @apply text-right tabular-nums whitespace-nowrap; }
+  tr.gone td { @apply text-muted-foreground line-through; }
+
+  main form { @apply my-3; }
+  main form.inline { @apply inline my-0; }
+  main label:not([data-slot]) { @apply my-4 flex flex-col gap-1.5 text-sm font-medium; }
+  main label.check { @apply flex-row items-center gap-2 font-normal; }
+  main input:not([data-slot]):not([type="checkbox"]):not([type="radio"]):not([type="hidden"]),
+  main select:not([data-slot]),
+  main textarea:not([data-slot]) {
+    @apply h-10 w-full min-w-0 max-w-sm rounded-lg border border-input bg-card px-3 py-1 text-base font-normal outline-none transition-[border-color,box-shadow]
+      placeholder:text-muted-foreground/70 hover:border-ring/70 focus-visible:border-ring focus-visible:ring-4 focus-visible:ring-ring/20 sm:text-sm;
+  }
+  /* The browser's own arrow sits tight against the edge and differs by
+     browser; draw one with room around it instead. */
+  main select:not([data-slot]) {
+    @apply cursor-pointer appearance-none bg-no-repeat pr-9;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%23888' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m4 6 4 4 4-4'/%3E%3C/svg%3E");
+    background-position: right 0.75rem center;
+    background-size: 1rem;
+  }
+  main textarea:not([data-slot]) { @apply h-auto min-h-24 py-2 max-w-xl; }
+  main input[type="file"]:not([data-slot]) { @apply h-auto py-2; }
+  main input[type="checkbox"]:not([data-slot]) { @apply size-4 accent-primary; }
+  main input[size]:not([data-slot]) { @apply w-28; }
+
+  main button:not([data-slot]) {
+    @apply inline-flex h-9 items-center justify-center gap-2 rounded-full border border-border bg-card px-4 align-middle text-sm font-medium transition-[background-color,transform]
+      hover:bg-accent active:scale-[0.98] disabled:opacity-50;
+  }
+  main form.inline button:not([data-slot]) { @apply h-8 px-3.5; }
+  main a.button { @apply inline-flex h-9 items-center rounded-full border border-border bg-card px-4 text-sm font-medium no-underline transition-colors hover:bg-accent hover:text-foreground; }
+  main a.button.primary,
+  main button.primary:not([data-slot]) { @apply border-primary bg-primary text-primary-foreground hover:bg-primary/90 hover:text-primary-foreground; }
+  /* Three tones: primary is the one thing a screen is for; quiet is a minor
+     or easily undone step (Rename, Restore); danger takes something away
+     (Void, Remove, Disconnect). Quiet and danger drop the pill so they don't
+     compete with the primary. */
+  main button.quiet:not([data-slot]) { @apply border-transparent bg-transparent px-2.5 text-muted-foreground hover:bg-accent hover:text-foreground; }
+  main button.danger:not([data-slot]) { @apply border-transparent bg-transparent px-2.5 text-destructive hover:bg-danger-soft; }
+
+  /* A main form on its own surface. */
+  main .panel { @apply max-w-2xl rounded-xl border-2 border-edge bg-card p-6 shadow-soft; }
+  main .panel.row { @apply max-w-none px-6 py-4; }
+  main fieldset { @apply my-4 rounded-xl border border-border/70 bg-card p-5; }
+  main fieldset legend { @apply px-1.5 text-sm font-semibold; }
+  main .panel fieldset { @apply bg-transparent; }
+  main fieldset.plain { @apply m-0 border-0 bg-transparent p-0; }
+  main details { @apply my-2 rounded-xl border border-border/70 bg-card px-4 py-2.5; }
+  main details > summary { @apply cursor-pointer text-sm font-medium marker:text-muted-foreground; }
+  main details[open] > summary { @apply mb-2; }
+  /* The filters above a list: folded until opened, and open while a filter
+     is on. */
+  main details.filters { @apply max-w-none; }
+  main details.filters > form { @apply my-0; }
+  /* Inside a table cell, a disclosure is a plain link-like toggle. */
+  main td details { @apply my-1 border-0 bg-transparent p-0; }
+  main td details > summary { @apply text-xs font-normal text-muted-foreground hover:text-foreground; }
+  /* A section's folded fine print, under its one-line note. */
+  main details.fine-print { @apply -mt-2 mb-3 border-0 bg-transparent p-0; }
+  main details.fine-print > summary { @apply text-sm font-normal text-muted-foreground hover:text-foreground; }
+  main details.fine-print > p { @apply my-1 max-w-2xl; }
+
+  /* A list whose items are panels, each with its own form. */
+  main ul.items { @apply my-4 list-none space-y-3 pl-0; }
+  /* Text an agent wrote can hold a word longer than the panel: it breaks
+     instead of widening the page. */
+  main ul.items > li { @apply max-w-2xl rounded-xl border-2 border-edge bg-card p-5 shadow-soft; overflow-wrap: anywhere; }
+  main ul.items > li > form:last-child { @apply mb-0; }
+
+  /* Only a cost that is not monthly needs the month it falls in. */
+  form:has(select[name="cadence"] option[value="monthly"]:checked) .month-field { @apply hidden; }
+
+  .row { @apply flex flex-wrap items-end gap-x-4 gap-y-2; }
+  :is(.row, .row > fieldset) > label { @apply my-1; }
+  /* On a phone the fields in a row share the width, two to a line at most,
+     and compact inputs fill their field. */
+  @media (width < 40rem) {
+    :is(.row, .row > fieldset) > label:not(.check) { @apply min-w-0 grow basis-32; }
+    main input[size]:not([data-slot]) { @apply w-full; }
+    main .panel { @apply p-4; }
+    /* A form's own submit button spans the panel, easy to reach with a thumb. */
+    main :is(.panel, .panel > fieldset) > button:not([data-slot]) { @apply h-11 w-full; }
+  }
+  .note { @apply text-sm text-muted-foreground; }
+  .tag { @apply inline-flex items-center rounded-full bg-muted px-2.5 py-0.5 text-xs font-medium whitespace-nowrap text-muted-foreground no-underline; }
+  .tag.ok { @apply bg-success-soft text-success; }
+  .tag.warn { @apply bg-warn-soft text-warn; }
+  .tag.bad { @apply bg-danger-soft text-destructive; }
+  .error { @apply text-sm font-medium text-destructive; }
+  .headline { @apply font-serif text-4xl leading-tight font-black tracking-tight text-balance text-title; font-variant-numeric: lining-nums tabular-nums; }
+}

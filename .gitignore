@@ -1,0 +1,26 @@
+# Personal financial data: never commit (seed data, exports, local DBs)
+private/
+*.sqlite
+*.sqlite-journal
+
+# Secrets
+.env*
+!.env.example
+!.env.selfhost.example
+
+# Build / deps
+node_modules/
+.next/
+out/
+dist/
+coverage/
+
+# Local tool settings
+.claude/settings.local.json
+.DS_Store
+next-env.d.ts
+*.tsbuildinfo
+
+# End-to-end test output
+test-results/
+playwright-report/
