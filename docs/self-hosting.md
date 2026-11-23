@@ -147,6 +147,10 @@ app` shows one `daily job:` line per run, with counts only. To switch it off,
 set `ABACUS_DAILY_JOB=0` in `.env`; costs then post when someone opens the
 app, as before.
 
+If others can sign up, set `ABACUS_OPS_EMAIL` to your own address. The job
+then emails you once a day with counts of sign-ups, groups and invites, and
+a warning when they look like bots. `docs/setup.md` says what it checks.
+
 ## Things that catch people out
 
 - **Changing `POSTGRES_PASSWORD` later does nothing.** Postgres reads it only
