@@ -55,8 +55,9 @@ place.
   marks a version as ready, and the hosted instance deploys the newest one.
   Deploy configuration lives outside this repository.
 
-GitHub does not enforce any of this while the repository is private on a free
-plan; it is a convention until branch protection is switched on.
+GitHub enforces part of this: `main` is protected, so a change reaches it
+only through a pull request whose `test` and `e2e` checks pass, and the
+repository allows squash merges only.
 
 ## Data conventions
 
