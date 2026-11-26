@@ -2,7 +2,7 @@
 
 ## Status
 
-**Draft**, 2026-11-25. Question 5 is open.
+**Decided 2026-11-25.** No question is open.
 
 Decisions:
 
@@ -16,6 +16,10 @@ Decisions:
 - **Question 2, 2026-11-25: 640px.** "640px". As recommended. If the title
   row does not fit, the balance drops to its own line under the title; the
   text does not shrink.
+- **Question 5, 2026-11-25: show every line.** "Show every line". As
+  recommended. Lines stack beside the title, right-aligned, 16px. A group
+  shows at most one line fewer than it has members (`balance.ts`, lines 90 to
+  106), so two people always show one.
 
 Boards: [`docs/design/2026-11-25-desktop-home-grid.html`](../design/2026-11-25-desktop-home-grid.html)
 
@@ -169,7 +173,7 @@ the extra day.
    look at every page to the ticket.
 4. ~~Where does "How the balance adds up" open?~~ **Decided 2026-11-25: it is
    cut.** The recommendation was the side panel. See Status.
-5. **A group with more than one debt line.** Recommend showing **every line**,
+5. **Decided 2026-11-25: every line.** ~~A group with more than one debt line.~~ Recommend showing **every line**,
    stacked at 16px. With the breakdown gone there is nowhere for "and N more"
    to lead, and three lines are still about 70px.
 6. **Closed by question 1: C was not chosen.** ~~Only for C: what do the To do and To sort tiles do?~~ Recommend a count
