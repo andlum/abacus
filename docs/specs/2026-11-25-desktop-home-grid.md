@@ -2,7 +2,14 @@
 
 ## Status
 
-**Draft**, 2026-11-25. No decisions recorded yet.
+**Draft**, 2026-11-25. Questions 1, 2, 3, 5 and 6 are open.
+
+Decisions:
+
+- **Question 4, 2026-11-25: cut "How the balance adds up".** "I think we need
+  to cut "How it adds up" - it's just a repeat of the ledger. Make that change
+  first across all designs". This went against the recommendation (keep it, in
+  a side panel). It applies to every approach.
 
 Boards: [`docs/design/2026-11-25-desktop-home-grid.html`](../design/2026-11-25-desktop-home-grid.html)
 
@@ -54,10 +61,15 @@ about 465px down the page content. The balance card and its margins are about
   per debt, or "You are all square."
 - **The balance stops being a headline.** It is no longer set in the 36px
   title style on a desktop.
-- **Nothing is lost.** "How the balance adds up" (the table and "See payments
-  in the Ledger"), the "Not counted yet" note and the business note are all
-  still reachable from the balance, and the balance is still a region named
-  "Balance" for screen readers and the Playwright story.
+- **"How the balance adds up" is removed** (decided, question 4). Nothing
+  opens from the balance. What goes with it: the table of every expense and
+  payment with each person's plus or minus, its "Position" footer, and the "See
+  payments in the Ledger" link. The Ledger shows the same rows with each
+  person's share, and "Show the maths" per row. `getBalance` and the API are
+  not changed; the page just stops rendering `balance.entries`.
+- **What stays on the balance:** the "Not counted yet" note and the business
+  note, the region named "Balance" for screen readers and the Playwright
+  story, and `id="balance"`, which Activity links and `/balance` point at.
 - **To do and To sort keep their contents** and still appear only when they
   have something to show.
 - **The Ledger keeps** its filters, month view, paging and columns.
@@ -68,9 +80,7 @@ about 465px down the page content. The balance card and its margins are about
 ### A. Balance in the title row
 
 The balance becomes one line at the right of the "Home" title: a small
-"Balance" label, the sentence in 16px semibold, and a "How it adds up" button
-that opens the side panel the page already has (`side-panel.tsx`, used for
-"Getting started"). The Ledger moves up to where the balance card was. When To
+"Balance" label and the sentence in 16px semibold. The Ledger moves up to where the balance card was. When To
 do and To sort both have something, they sit side by side above the Ledger.
 
 - **For:** gives back the most height, about 225px; the Ledger keeps its full
@@ -80,8 +90,9 @@ do and To sort both have something, they sit side by side above the Ledger.
   row and a ledger. The title row gets busy on the days it also holds "Paid
   personally" and "Getting started". A group with several debts needs a rule
   for how many lines to show (question 5).
-- **Cost:** `page.tsx`, `home-balance.tsx`, and the two balance steps in
-  `e2e/household.spec.ts`. One client. About half a day.
+- **Cost:** `page.tsx`, `home-balance.tsx`, and `e2e/household.spec.ts`, where
+  the two steps that open the breakdown are deleted. One client. Under half a
+  day.
 
 ### B. Ledger with a side rail
 
@@ -105,7 +116,7 @@ small Balance card, then To do, then To sort.
 ### C. A row of tiles
 
 A row of small tiles above the Ledger: Balance, Last 30 days, To do, To sort.
-Each is about 90px tall. The balance tile opens the same side panel as A. The
+Each is about 90px tall. The
 "Last 30 days" count moves out of the Ledger into its tile.
 
 - **For:** reads as a dashboard; the balance is one detail among four; still
@@ -122,8 +133,7 @@ Each is about 90px tall. The balance tile opens the same side panel as A. The
 
 ### D. Shrink the card where it is (not advised)
 
-Keep the stack. The balance card becomes one 56px row: label, sentence in 16px,
-and the fold at the right.
+Keep the stack. The balance card becomes one 56px row: label, sentence in 16px.
 
 - **For:** an hour's work, one file, nothing else moves.
 - **Against:** saves about 135px but leaves a full-width bar holding one
@@ -151,11 +161,11 @@ the extra day.
    A, C and D. For B, recommend widening every page's header, nav and content
    to 1152px together, so the header does not shift between pages. That adds a
    look at every page to the ticket.
-4. **Where does "How the balance adds up" open?** Recommend **the side panel**,
-   as "Getting started" does. The alternative is a fold that opens in place
-   under the title row and pushes the Ledger down.
-5. **A group with more than one debt line.** Recommend showing **up to two
-   lines**, then "and N more" opening the same panel.
+4. ~~Where does "How the balance adds up" open?~~ **Decided 2026-11-25: it is
+   cut.** The recommendation was the side panel. See Status.
+5. **A group with more than one debt line.** Recommend showing **every line**,
+   stacked at 16px. With the breakdown gone there is nowhere for "and N more"
+   to lead, and three lines are still about 70px.
 6. **Only for C: what do the To do and To sort tiles do?** Recommend a count
    that scrolls to the full card, which still appears below the tiles when it
    has items.
@@ -173,6 +183,10 @@ the extra day.
   a list. I did not check how many lines a three-person group produces.
 - I assumed "desktop" means the web app in a wide window. Nothing here is for
   the iOS app.
-- The side panel renders outside the Balance region, so the Playwright steps
-  that click "How the balance adds up" inside that region will need to change.
-  I read those steps and did not run them.
+- `e2e/household.spec.ts` lines 197 to 202 click "How the balance adds up" and
+  "See payments in the Ledger". They are deleted with the breakdown. I read
+  those steps and did not run them.
+- I compared the breakdown with the Ledger by reading `balance.ts` and
+  `ledger-view.tsx`, not by opening both on the same data.
+- I did not check whether the iOS app or the API's `/balance` shows the same
+  breakdown. Neither is touched here.
