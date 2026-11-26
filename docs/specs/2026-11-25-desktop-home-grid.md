@@ -2,7 +2,7 @@
 
 ## Status
 
-**Draft**, 2026-11-25. Questions 2 and 5 are open.
+**Draft**, 2026-11-25. Question 5 is open.
 
 Decisions:
 
@@ -13,6 +13,9 @@ Decisions:
 - **Question 1, 2026-11-25: approach A.** "A, title row". As recommended.
   This closes question 3 (the page stays 1024px wide; it only mattered for B)
   and question 6 (it was only for C).
+- **Question 2, 2026-11-25: 640px.** "640px". As recommended. If the title
+  row does not fit, the balance drops to its own line under the title; the
+  text does not shrink.
 
 Boards: [`docs/design/2026-11-25-desktop-home-grid.html`](../design/2026-11-25-desktop-home-grid.html)
 
@@ -156,7 +159,7 @@ the extra day.
 ## Questions
 
 1. ~~Which approach?~~ **Decided 2026-11-25: A**, as recommended.
-2. **From what window width does the desktop layout apply?** Recommend
+2. **Decided 2026-11-25: 640px**, as recommended. ~~From what window width does the desktop layout apply?~~ Recommend
    **640px**, the width at which the Ledger already switches from cards to a
    table, so there is one breakpoint, not two. (B would need about 1200px
    whatever is chosen here.)
