@@ -2,7 +2,7 @@
 
 ## Status
 
-**Draft**, 2026-11-25. Questions 1, 2, 3, 5 and 6 are open.
+**Draft**, 2026-11-25. Questions 2 and 5 are open.
 
 Decisions:
 
@@ -10,6 +10,9 @@ Decisions:
   to cut "How it adds up" - it's just a repeat of the ledger. Make that change
   first across all designs". This went against the recommendation (keep it, in
   a side panel). It applies to every approach.
+- **Question 1, 2026-11-25: approach A.** "A, title row". As recommended.
+  This closes question 3 (the page stays 1024px wide; it only mattered for B)
+  and question 6 (it was only for C).
 
 Boards: [`docs/design/2026-11-25-desktop-home-grid.html`](../design/2026-11-25-desktop-home-grid.html)
 
@@ -152,12 +155,12 @@ the extra day.
 
 ## Questions
 
-1. **Which approach?** Recommend **A**.
+1. ~~Which approach?~~ **Decided 2026-11-25: A**, as recommended.
 2. **From what window width does the desktop layout apply?** Recommend
    **640px**, the width at which the Ledger already switches from cards to a
    table, so there is one breakpoint, not two. (B would need about 1200px
    whatever is chosen here.)
-3. **Widen the page beyond 1024px?** Only matters for B. Recommend **no** for
+3. **Closed by question 1: no, A keeps 1024px.** ~~Widen the page beyond 1024px?~~ Only matters for B. Recommend **no** for
    A, C and D. For B, recommend widening every page's header, nav and content
    to 1152px together, so the header does not shift between pages. That adds a
    look at every page to the ticket.
@@ -166,7 +169,7 @@ the extra day.
 5. **A group with more than one debt line.** Recommend showing **every line**,
    stacked at 16px. With the breakdown gone there is nowhere for "and N more"
    to lead, and three lines are still about 70px.
-6. **Only for C: what do the To do and To sort tiles do?** Recommend a count
+6. **Closed by question 1: C was not chosen.** ~~Only for C: what do the To do and To sort tiles do?~~ Recommend a count
    that scrolls to the full card, which still appears below the tiles when it
    has items.
 
