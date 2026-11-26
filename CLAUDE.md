@@ -55,8 +55,8 @@ place.
   marks a version as ready, and the hosted instance deploys the newest one.
   Deploy configuration lives outside this repository.
 
-GitHub enforces part of this: `main` is protected, so a change reaches it
-only through a pull request whose `test` and `e2e` checks pass, and the
+This is a convention, not a lock. `main` is not a protected branch on GitHub,
+so nothing stops a direct push or a merge with a failing check. The
 repository allows squash merges only.
 
 ## Data conventions
