@@ -12,16 +12,50 @@ async function signIn(page: Page, who: "Alex" | "Sam", today: string) {
   await expect(page.getByRole("heading", { name: "Home" })).toBeVisible();
 }
 
-const headline = (page: Page) => page.locator(".headline");
+// The balance sentence: one line per debt, or "You are all square."
+const headline = (page: Page) => page.locator("[data-balance-line]");
 
 test("a new household is all square", async ({ page }) => {
   await signIn(page, "Alex", "2027-03-01");
   await expect(headline(page)).toHaveText("You are all square.");
+  // The breakdown that repeated the Ledger is gone.
+  await expect(page.getByText("How the balance adds up")).toHaveCount(0);
+  await expect(page.getByRole("link", { name: "See payments in the Ledger" })).toHaveCount(0);
   await page.getByRole("button", { name: "Getting started · 1 of 3" }).click();
   const start = page.getByRole("dialog", { name: "Getting started" });
   await expect(start).toContainText("1 of 3 done");
   await expect(start).toContainText("Sam has joined");
   await expect(start.getByRole("link", { name: "Add a recurring cost" })).toHaveAttribute("href", "/expenses/new?kind=recurring");
+});
+
+test("on a desktop the balance is a detail beside the title; on a phone it is a card", async ({ page }) => {
+  await signIn(page, "Alex", "2027-03-01");
+  const title = page.getByRole("heading", { level: 1, name: "Home" });
+  const balance = page.getByRole("region", { name: "Balance" });
+  const line = headline(page);
+  const box = async (l: typeof title) => (await l.boundingBox())!;
+
+  await page.setViewportSize({ width: 1000, height: 800 });
+  const [t, b] = [await box(title), await box(line)];
+  // Same row: the sentence starts to the right of the title and overlaps it vertically.
+  expect(b.x).toBeGreaterThan(t.x + t.width);
+  expect(b.y).toBeLessThan(t.y + t.height);
+  expect(b.y + b.height).toBeGreaterThan(t.y);
+  await expect(line).toHaveCSS("font-size", "16px");
+  // The Ledger is the next thing under that row.
+  const ledger = await box(page.getByRole("heading", { level: 2, name: "Ledger" }));
+  expect(ledger.y - (t.y + t.height)).toBeLessThan(80);
+
+  await page.setViewportSize({ width: 639, height: 800 });
+  const [t2, b2, card] = [await box(title), await box(line), await box(balance)];
+  expect(b2.y).toBeGreaterThan(t2.y + t2.height);
+  expect(card.width).toBeGreaterThan(550);
+  await expect(line).toHaveCSS("font-size", "36px");
+
+  // /balance still lands on the balance.
+  await page.goto("/balance");
+  await expect(page).toHaveURL(/#balance$/);
+  await expect(balance).toBeInViewport();
 });
 
 test("rent is entered by itself on its due date, split evenly by default", async ({ page }) => {
@@ -198,8 +232,6 @@ test("settling up clears the balance; an edited payment counts its new amount, a
   await expect(balance.getByLabel("Amount", { exact: true })).toHaveCount(0);
 
   // The payment is in the Ledger, and opens to be edited.
-  await balance.getByText("How the balance adds up").click();
-  await balance.getByRole("link", { name: "See payments in the Ledger" }).click();
   await page.getByRole("region", { name: "Ledger" }).getByRole("row").filter({ hasText: "Sam paid Alex" }).getByRole("link", { name: "Sam paid Alex" }).click();
   await expect(page.getByRole("heading", { level: 1 })).toHaveText("Payment");
   await page.getByLabel("Amount", { exact: true }).fill("1600.00");

@@ -23,6 +23,9 @@ export async function Shell(props: {
   members?: Member[];
   today: string;
   title: string;
+  // A detail beside the title on a wide window, a full-width block under it
+  // on a phone. Home puts the balance here.
+  aside?: ReactNode;
   actions?: ReactNode;
   children: ReactNode;
 }) {
@@ -88,6 +91,7 @@ export async function Shell(props: {
       <main className="mx-auto max-w-5xl px-4 pt-10 pb-24 sm:px-6">
         <div className="mb-6 flex flex-wrap items-end justify-between gap-3">
           <h1 className="mb-0">{props.title}</h1>
+          {props.aside && <div className="max-sm:order-last max-sm:w-full sm:ml-auto sm:pb-1.5">{props.aside}</div>}
           {props.actions && <div className="flex items-center gap-2 pb-1">{props.actions}</div>}
         </div>
         {props.children}
