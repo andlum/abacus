@@ -1,6 +1,4 @@
 import Link from "next/link";
-import { shortDate } from "@abacus/core/dates";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import type { Balance } from "@/lib/balance";
 import type { getOwedBack } from "@/lib/owed-back";
 import type { requireHousehold } from "@/lib/session";
@@ -9,7 +7,7 @@ import { Money } from "./ui";
 type Ctx = Awaited<ReturnType<typeof requireHousehold>>;
 type OwedBack = NonNullable<Awaited<ReturnType<typeof getOwedBack>>>;
 
-type BalanceCardProps = {
+type HomeBalanceProps = {
   ctx: Ctx;
   balance: Balance;
   owedBack: OwedBack | null;
@@ -17,89 +15,51 @@ type BalanceCardProps = {
   notCounted: number;
 };
 
-// Who owes whom and, folded away, how the number adds up, with a way to the
-// payments in the Ledger. A payment is recorded on its own page, from the
-// Record payment button in the header.
-export function BalanceCard({ ctx, balance, owedBack, notCounted }: BalanceCardProps) {
-  const { members, today } = ctx;
-  const nameOf = new Map(members.map((m) => [m.id, m.displayName]));
+// Below 640px the sentence is the headline of a card. From 640px it is a
+// detail in 16px beside the page title.
+const line =
+  "m-0 text-title tabular-nums lining-nums max-sm:font-serif max-sm:text-4xl max-sm:leading-tight max-sm:font-black max-sm:tracking-tight max-sm:text-balance sm:text-base sm:leading-snug sm:font-semibold";
+
+// Who owes whom, one line per debt. How it adds up is the Ledger's job. A
+// payment is recorded on its own page, from the Record payment button in the
+// header.
+export function HomeBalance({ ctx, balance, owedBack, notCounted }: HomeBalanceProps) {
+  const nameOf = new Map(ctx.members.map((m) => [m.id, m.displayName]));
 
   return (
-    <Card id="balance" aria-label="Balance" role="region" className="scroll-mt-20">
-      <CardHeader>
-        <CardDescription>Balance</CardDescription>
-        {balance.owes.length === 0 ? (
-          <CardTitle className="headline font-serif text-4xl leading-tight">You are all square.</CardTitle>
-        ) : (
-          balance.owes.map((o) => (
-            <CardTitle className="headline font-serif text-4xl leading-tight" key={`${o.from}:${o.to}`}>
-              {nameOf.get(o.from)} owes {nameOf.get(o.to)} <Money cents={o.amountCents} />
-            </CardTitle>
-          ))
-        )}
-        {notCounted > 0 && (
-          <p className="note">
-            Not counted yet: {notCounted === 1 ? "1 expense" : `${notCounted} expenses`} waiting in To do.
-          </p>
-        )}
-        {owedBack?.members.some((m) => m.personalPaidCents > 0) && (
-          <p className="note">
-            Costs paid from a personal account are not counted here; the business owes them back.{" "}
-            <Link href="/paid-personally">See what is owed</Link>
-          </p>
-        )}
-      </CardHeader>
-      <CardContent>
-        <details>
-          <summary>How the balance adds up</summary>
-          {balance.entries.length === 0 ? (
-            <p>Nothing yet.</p>
+    <div
+      id="balance"
+      aria-label="Balance"
+      role="region"
+      className="flex scroll-mt-20 flex-col gap-1 max-sm:rounded-xl max-sm:border-2 max-sm:border-edge max-sm:bg-card max-sm:p-5 max-sm:shadow-soft sm:items-end sm:text-right"
+    >
+      <div className="flex flex-col gap-1 sm:flex-row sm:items-baseline sm:gap-3">
+        <span className="text-sm text-muted-foreground">Balance</span>
+        <div className="flex flex-col">
+          {balance.owes.length === 0 ? (
+            <p data-balance-line className={line}>
+              You are all square.
+            </p>
           ) : (
-            <table>
-              <thead>
-                <tr>
-                  <th>Date</th>
-                  <th>What</th>
-                  {members.map((m) => (
-                    <th className="num" key={m.id}>
-                      {m.displayName}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {balance.entries.map((entry) => (
-                  <tr key={entry.id}>
-                    <td className="whitespace-nowrap">{shortDate(entry.date, today)}</td>
-                    <td>
-                      {entry.kind === "settlement" ? `Payment${entry.description ? `: ${entry.description}` : ""}` : entry.description}
-                    </td>
-                    {members.map((m) => (
-                      <td className="num" key={m.id}>
-                        <Money cents={entry.effect[m.id] ?? 0} />
-                      </td>
-                    ))}
-                  </tr>
-                ))}
-              </tbody>
-              <tfoot>
-                <tr>
-                  <th colSpan={2}>Position (plus: is owed; minus: owes)</th>
-                  {members.map((m) => (
-                    <th className="num" key={m.id}>
-                      <Money cents={balance.net[m.id] ?? 0} />
-                    </th>
-                  ))}
-                </tr>
-              </tfoot>
-            </table>
+            balance.owes.map((o) => (
+              <p data-balance-line className={line} key={`${o.from}:${o.to}`}>
+                {nameOf.get(o.from)} owes {nameOf.get(o.to)} <Money cents={o.amountCents} />
+              </p>
+            ))
           )}
-
-          <p>
-            <Link href="#ledger">See payments in the Ledger</Link>
-          </p>
-        </details>
-      </CardContent>
-    </Card>
+        </div>
+      </div>
+      {notCounted > 0 && (
+        <p className="note m-0">
+          Not counted yet: {notCounted === 1 ? "1 expense" : `${notCounted} expenses`} waiting in To do.
+        </p>
+      )}
+      {owedBack?.members.some((m) => m.personalPaidCents > 0) && (
+        <p className="note m-0 sm:max-w-sm">
+          Costs paid from a personal account are not counted here; the business owes them back.{" "}
+          <Link href="/paid-personally">See what is owed</Link>
+        </p>
+      )}
+    </div>
   );
 }

@@ -5,7 +5,7 @@ import { gettingStarted } from "@/lib/getting-started";
 import { postDue } from "@/lib/expenses";
 import { getOwedBack } from "@/lib/owed-back";
 import { requireHousehold } from "@/lib/session";
-import { BalanceCard } from "./home-balance";
+import { HomeBalance } from "./home-balance";
 import { BankToSort } from "./home-bank";
 import { ToDo } from "./home-todo";
 import { LedgerView, type LedgerParams } from "./ledger-view";
@@ -102,14 +102,19 @@ export default async function Home({ searchParams }: { searchParams: Promise<Led
   );
 
   return (
-    <Shell {...ctx} title="Home" actions={actions}>
-      {/* The balance and, when there is anything to do, the to-do list beside it. */}
-      <div className={attention.count > 0 ? "grid items-start gap-4 sm:grid-cols-2" : "grid gap-4"}>
-        <BalanceCard ctx={ctx} balance={balance} owedBack={owedBack} notCounted={attention.count} />
+    <Shell
+      {...ctx}
+      title="Home"
+      aside={<HomeBalance ctx={ctx} balance={balance} owedBack={owedBack} notCounted={attention.count} />}
+      actions={actions}
+    >
+      {/* To do and To sort show only when they hold something. On a wide
+          window two of them sit side by side; one takes the full width. */}
+      <div className="grid items-start gap-4 sm:has-[#to-do]:has-[#to-sort]:grid-cols-2">
         {attention.count > 0 && <ToDo ctx={ctx} attention={attention} />}
-      </div>
-      <div className="mt-4 flex flex-col gap-4 empty:hidden">
-        <BankToSort ctx={ctx} />
+        <div className="flex flex-col gap-4 empty:hidden">
+          <BankToSort ctx={ctx} />
+        </div>
       </div>
 
       <LedgerView ctx={ctx} raw={raw} />
