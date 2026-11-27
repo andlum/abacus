@@ -115,8 +115,19 @@ describe("finishRelink", () => {
 describe("what the screens list", () => {
   it("shows a member only their own connections and set-aside transactions, never the token", async () => {
     const a = await connect();
-    fake.on("alex", "", { added: [txn("t1"), txn("t2")], next_cursor: "c1" });
-    await syncConnection(w.db, bank, a.connection.id, NOW);
+    // Waiting rows put in directly: a purchase on a card that does not share
+    // everything is no longer stored by the sync.
+    for (const id of ["t1", "t2"]) {
+      await w.db.insert(bankTransaction).values({
+        householdId: w.householdId,
+        connectionId: a.connection.id,
+        accountId: a.accounts[0]!.id,
+        plaidTransactionId: id,
+        date: "2027-03-05",
+        amountCents: 2000,
+        description: "Corner Shop",
+      });
+    }
     const [t1] = await w.db.select().from(bankTransaction).where(eq(bankTransaction.plaidTransactionId, "t1"));
     await dismissBankTransaction(w.db, w.alex, t1!.id);
 

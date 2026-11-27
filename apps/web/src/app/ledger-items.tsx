@@ -9,7 +9,7 @@ import { cn } from "@/lib/utils";
 import { ExpenseCard, ExpenseRow } from "./expense-items";
 import { accountText, Money } from "./ui";
 
-type Props = { item: LedgerItem; members: Member[]; categories: Category[]; accounts: Account[]; back?: string; today: string };
+type Props = { item: LedgerItem; members: Member[]; categories: Category[]; accounts: Account[]; back?: string; today: string; marked?: Set<string> };
 
 type Movement = { date: string; amountCents: number; note: string; status: string };
 
@@ -39,8 +39,8 @@ function said(item: Exclude<LedgerItem, { kind: "expense" }>, members: Member[],
   };
 }
 
-export function LedgerRow({ item, members, categories, accounts, back, today }: Props) {
-  if (item.kind === "expense") return <ExpenseRow e={item.expense} members={members} categories={categories} accounts={accounts} back={back} today={today} />;
+export function LedgerRow({ item, members, categories, accounts, back, today, marked }: Props) {
+  if (item.kind === "expense") return <ExpenseRow e={item.expense} members={members} categories={categories} accounts={accounts} back={back} today={today} isNew={marked?.has(item.expense.id)} />;
   const s = said(item, members, accounts);
   return (
     <tr className={s.tag ? "gone" : undefined}>
@@ -65,8 +65,8 @@ export function LedgerRow({ item, members, categories, accounts, back, today }: 
   );
 }
 
-export function LedgerCard({ item, members, categories, accounts, back, today }: Props) {
-  if (item.kind === "expense") return <ExpenseCard e={item.expense} members={members} categories={categories} accounts={accounts} back={back} today={today} />;
+export function LedgerCard({ item, members, categories, accounts, back, today, marked }: Props) {
+  if (item.kind === "expense") return <ExpenseCard e={item.expense} members={members} categories={categories} accounts={accounts} back={back} today={today} isNew={marked?.has(item.expense.id)} />;
   const s = said(item, members, accounts);
   return (
     <li className={cn("rounded-xl border border-border/70 bg-card p-4 text-sm shadow-soft", s.tag && "opacity-70")}>

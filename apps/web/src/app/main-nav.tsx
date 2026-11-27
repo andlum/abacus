@@ -8,11 +8,13 @@ import { cn } from "@/lib/utils";
 const LINKS = [
   ["/", "Home"],
   ["/recurring", "Recurring costs"],
+  ["/accounts", "Accounts"],
   ["/activity", "Activity"],
   ["/settings", "Settings"],
 ] as const;
 
-export function MainNav() {
+// `accounts` is false on a server without bank keys, which has none to show.
+export function MainNav({ accounts = false }: { accounts?: boolean }) {
   const path = usePathname();
   // On a phone the nav scrolls sideways; bring the current tab into view with
   // a neighbour showing on each side, so it is clear there is more.
@@ -24,7 +26,7 @@ export function MainNav() {
   }, [path]);
   return (
     <>
-      {LINKS.map(([href, label]) => {
+      {LINKS.filter(([href]) => accounts || href !== "/accounts").map(([href, label]) => {
         const on = href === "/" ? path === "/" : path === href || path.startsWith(`${href}/`);
         return (
           <Link

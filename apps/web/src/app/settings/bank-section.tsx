@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { bankRuntime, listConnections } from "@/lib/bank-link";
 import type { requireHousehold } from "@/lib/session";
 import { ActionForm } from "../action-form";
@@ -17,9 +18,9 @@ export async function BankConnections({ me, db, home }: Ctx) {
     <div data-slot="bank-connections" className="mb-6">
       <h3>Connected banks</h3>
       <p className="note">
-        Sign in to your bank through Plaid and its credit cards appear here as accounts (checking, savings and loans are left out). Their purchases, starting
-        with the last 30 days, wait on Home for you to add or set aside; only you see them until you add one. Set aside any you already entered by
-        hand, so it is not counted twice. Clementine is shown a card&rsquo;s name and last four digits and its purchases, never your
+        Sign in to your bank through Plaid and its credit cards appear here as accounts (checking, savings and loans are left out). Choose in{" "}
+        <Link href="/accounts">Accounts</Link> whether each card is shared or personal, then review its purchases there and pick the ones to split. Only you
+        see them until you do. Clementine is shown a card&rsquo;s name and last four digits and its purchases, never your
         bank password.
       </p>
       <RelinkNotice connections={connections} />
@@ -35,19 +36,23 @@ export async function BankConnections({ me, db, home }: Ctx) {
                 {c.accounts.map((a) => (
                   <li key={a.id} className="flex flex-wrap items-center justify-between gap-2">
                     <span className="min-w-0 [overflow-wrap:anywhere]">{accountText(a)}</span>
-                    <ActionForm action={setBankShareAllAction} done={a.shareAll ? "Back to sorting by hand" : "Sharing everything on this card"} className="row">
-                      <input type="hidden" name="accountId" value={a.id} />
-                      <input type="hidden" name="on" value={a.shareAll ? "0" : "1"} />
-                      <span className="text-sm">Everything shared: {a.shareAll ? "on" : "off"}</span>
-                      <button className="quiet">{a.shareAll ? "Turn off" : "Turn on"}</button>
-                    </ActionForm>
+                    {a.shareAll && (
+                      <ActionForm action={setBankShareAllAction} done="Back to sorting by hand" className="row">
+                        <input type="hidden" name="accountId" value={a.id} />
+                        <input type="hidden" name="on" value="0" />
+                        <span className="text-sm">Everything shared: on</span>
+                        <button className="quiet">Turn off</button>
+                      </ActionForm>
+                    )}
                   </li>
                 ))}
               </ul>
-              <p className="note my-0">
-                Everything shared, when on, makes each purchase on that card a shared expense by itself, split by {home.name}&rsquo;s rules for its
-                date. It applies to purchases that arrive after you turn it on.
-              </p>
+              {c.accounts.some((a) => a.shareAll) && (
+                <p className="note my-0">
+                  Everything shared, while on, makes each purchase on that card a shared expense by itself, split by {home.name}&rsquo;s rules for its
+                  date. Turn it off to review the card&rsquo;s purchases by hand from Accounts.
+                </p>
+              )}
               <ActionForm
                 action={disconnectBankAction}
                 done="Disconnected"

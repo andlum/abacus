@@ -2,7 +2,8 @@
 
 ## Status
 
-**Decided 2026-11-27.** No question is open. Nothing is built.
+**Decided 2026-11-27. Built 2026-11-27**, with the changes in "As built"
+below. No question is open.
 
 Decisions:
 
@@ -32,6 +33,37 @@ Decisions:
   "Move it to Accounts". As recommended. Home shows no bank lists; a
   checking or savings account's To sort lives on its page in Accounts, and
   the nav item counts what is waiting there.
+- **2026-11-27, at build: Abacus connects only credit cards.** "Cards only".
+  `createLinkToken` asks Plaid for credit cards alone and `connectBank` keeps
+  only `isCreditCard` accounts, so no checking or savings account can exist.
+  Every part of this spec about them (questions 3 and 5, the "Checking 1111"
+  row, the nav count, the to-sort count in the API) was not built.
+
+## As built
+
+What differs from the sections below:
+
+- **No checking or savings parts.** See the last decision above.
+- **To sort stays only for cards with "share every purchase" on.** Their
+  purchases still arrive and are added on their own, and money in still
+  waits in To sort. That list moves from Home to the card's page in
+  Accounts. On every other card, a purchase untied from a recurring cost is
+  set aside, not put back in To sort, so a review can pick it again.
+- **The payment's expense is superseded, not corrected.** Taking purchases
+  out makes a new version of the payment's expense with the smaller total
+  (`createExpense` with `replaces`), as an edit does. No `expense_change`
+  correction rows.
+- **New cards start personal**, as existing ones do. The card's page asks.
+- **The "Card payment" category is made the first time a group needs it**,
+  not added to every group's defaults, so groups with no card never see it.
+- **Only the start of a review can be widened** (`?from=`), back at most 730
+  days and to what Plaid holds (90 days before the link). The end is the
+  payment's date, or today on a personal card. The API takes no `to`.
+- **A review with nothing picked is refused.** On a personal card that means
+  `reviewedThrough` moves only when something is added.
+- **What counts as a payment:** money in whose category is
+  `LOAN_PAYMENTS_CREDIT_CARD_PAYMENT` or `TRANSFER_IN`. Other money in is a
+  refund and is not stored. No name guessing.
 
 Boards: [`docs/design/2026-11-27-card-review.html`](../design/2026-11-27-card-review.html)
 
@@ -350,7 +382,8 @@ Written first, against PGlite and the fake Plaid:
   before a payment may have been on the next statement. Taking it out of this
   payment still balances in total over two payments, but one payment can end
   up smaller than what it really paid for.
-- **The payment shows up twice when both ends are connected.** With the
+- **The payment shows up twice when both ends are connected.** (Cannot
+  happen while Abacus connects only cards; kept for if that changes.) With the
   checking account that pays the card also connected, the payment is a shared
   expense from the card and also an outflow in that account's To sort. Adding
   it there would share it twice. That row should say "Paid your Visa 4242:
@@ -361,12 +394,20 @@ Written first, against PGlite and the fake Plaid:
   payments in a month, makes each its own expense; purchases between them
   belong to the later one.
 
-## Not verified
+## Checked against Plaid's docs (2026-11-27)
 
-- That Plaid sets `LOAN_PAYMENTS_CREDIT_CARD_PAYMENT` on every bank's card
-  payments. A fallback (money in whose name contains "payment") is a guess.
-- Plaid's limits on `transactions/get` per Item, and whether it returns
-  transactions older than the 30 days the connection asked for at link time
-  (`days_requested`).
-- How `transactions/get` and `transactions/sync` ids line up, so a purchase
-  added in a review is recognised if a later sync sends it.
+- `LOAN_PAYMENTS_CREDIT_CARD_PAYMENT` is a real category ("payments made to a
+  credit card account"). The docs do not say which category the card's side
+  of a payment gets, so `TRANSFER_IN` also counts. Refunds have no category
+  of their own; they keep the merchant's.
+- `transactions/get` needs a start and end date, returns at most 500 a page
+  with an offset, allows 30 calls a minute per Item, and answers
+  `PRODUCT_NOT_READY` until Plaid's first pull is done (the review says to
+  try again in a few minutes).
+- Abacus never sets `days_requested`, so Plaid keeps its default of 90 days
+  before the link. The 30 days in this spec are Abacus's own
+  `HISTORY_DAYS`. It cannot be raised after linking without removing the
+  Item.
+- The docs call both ids "the unique ID" without saying they match. A
+  pending purchase gets a new id when it posts; the review shows posted
+  ones only. It matters only for cards that still share every purchase.

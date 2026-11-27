@@ -11,6 +11,7 @@ import type { Db } from "../db/types.ts";
 import { UserError } from "@abacus/core/errors";
 import { writeAudit } from "./audit.ts";
 import { markNeedsRelink, syncConnection, type BankDeps, type ToSort } from "./bank.ts";
+import { e2eBankRuntime } from "./e2e-plaid.ts";
 import { isUuid } from "./ids.ts";
 import { bankConfig, plaidClient, RELINK_CODES, verifyPlaidWebhook, webhookKeyCache, type PlaidWebhookKey } from "./plaid.ts";
 import { openSecret } from "./secret-box.ts";
@@ -31,6 +32,9 @@ let memo: { id: string; runtime: BankRuntime } | null = null;
 // connecting a bank is not set up, so every screen can hide it. Kept between
 // calls so the key cache is shared.
 export function bankRuntime(env: Env = process.env): BankRuntime | null {
+  // The browser tests' fake Plaid; null unless ABACUS_E2E and ABACUS_E2E_FAKE_PLAID are both on.
+  const fake = e2eBankRuntime(env);
+  if (fake) return fake;
   const config = bankConfig(env);
   if (!config) return null;
   const id = `${config.clientId}|${config.secret}|${config.env}|${config.key.toString("base64")}`;

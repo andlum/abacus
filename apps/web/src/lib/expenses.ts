@@ -6,6 +6,8 @@ import { randomUUID } from "node:crypto";
 import { and, asc, eq, gte, inArray, isNotNull, isNull, lt, lte, notInArray, sql, type SQL } from "drizzle-orm";
 import {
   auditLog,
+  cardPayment,
+  category,
   expense,
   expenseShare,
   expenseTemplate,
@@ -20,6 +22,7 @@ import { toCategory } from "./categories.ts";
 import { addMonths, isIsoDate, isMonth, monthOf } from "@abacus/core/dates";
 import { UserError } from "@abacus/core/errors";
 import { followEdit, releaseTie, tieWaitingPurchase } from "./bank-match.ts";
+import { dropPayment, followPayment } from "./card-payments.ts";
 import { isUuid } from "./ids.ts";
 import { householdMembers, memberIdsOn, requireHouseholdMember } from "./members.ts";
 import { isValidRule, type Rule } from "@abacus/core/split";
@@ -95,7 +98,33 @@ export type ExpenseEvent =
       // The Plaid transaction id, so a leftover cent goes the same way
       // however often the split is worked out.
       seed: string;
+      // A split picked for this one purchase in a card review, instead of
+      // the agreed rules.
+      rule?: Rule;
+    }
+  | {
+      // A payment to a shared card (card-review.ts): posted by the sync when
+      // it arrives (`auto`), and superseded with a smaller total when a
+      // review takes purchases out of it, or a larger one when one is put
+      // back. Always in the `card_payment` category.
+      kind: "card_payment";
+      actor: Member;
+      auto: boolean;
+      date: string;
+      description: string;
+      totalCents: number;
+      payerId: string;
+      accountId: string;
+      today: string;
+      seed: string;
+      // Kept from the version it replaces, when someone chose one.
+      rule?: Rule;
+      replaces?: Expense;
     };
+
+// The category a shared card's payment is in. Added to a group the first
+// time it needs it, so groups made before card review get it too.
+export const CARD_PAYMENT_CATEGORY = { slug: "card_payment", label: "Card payment" } as const;
 
 const LIVE = ["posted", "unassigned", "needs_amount"] as const;
 // Whether an expense counts now: posted, waiting to be split, or waiting for
@@ -139,10 +168,15 @@ async function insertResolved(
 
 type EntryEvent = Exclude<ExpenseEvent, { kind: "template" }>;
 
+// The split someone chose for this one expense, if any.
+function chosenRule(event: EntryEvent): Rule | undefined {
+  return event.kind === "manual" || event.kind === "bank" || event.kind === "card_payment" ? event.rule : undefined;
+}
+
 // How an expense entered by hand or imported is split. createExpense saves
 // by it, and previewEdit shows what it would save.
 function entryRequest(event: EntryEvent, lineageId: string | null, category: string): SplitRequest {
-  const chosen = event.kind === "manual" ? event.rule : undefined;
+  const chosen = chosenRule(event);
   return {
     templateLineageId: lineageId,
     category,
@@ -233,7 +267,7 @@ export async function createExpense(
   if (!isIsoDate(event.date)) throw new UserError("the date is not a date");
   if (event.date > event.today) throw new UserError("an expense cannot be dated later than today");
   await requireHouseholdMember(db, householdId, event.payerId, "the payer", event.date);
-  const chosen = event.kind === "manual" ? event.rule : undefined;
+  const chosen = chosenRule(event);
   if (chosen) {
     const memberIds = memberIdsOn(await householdMembers(db, householdId), event.date);
     if (!isValidRule(chosen, memberIds)) throw new UserError("that split is not valid for this household");
@@ -253,14 +287,14 @@ export async function createExpense(
       if (superseded.length === 0) throw new UserError("that expense has already been replaced or voided");
     }
     const lineageId = old?.templateLineageId ?? null;
-    const category = await toCategory(tx, householdId, event.category);
+    const category = event.kind === "card_payment" ? (old?.category ?? (await ensureCardPaymentCategory(tx, householdId))) : await toCategory(tx, householdId, event.category);
     // An import or a bank may name an archived account: they record what was.
     const accountId =
       event.accountId === undefined
         ? (old?.accountId ?? null)
-        : await toAccountId(tx, householdId, event.accountId, { keep: old?.accountId, archived: event.kind === "import" || event.kind === "bank" });
+        : await toAccountId(tx, householdId, event.accountId, { keep: old?.accountId, archived: event.kind !== "manual" });
     // Posted by the sync, not by a person.
-    const auto = event.kind === "bank" && event.auto;
+    const auto = (event.kind === "bank" || event.kind === "card_payment") && event.auto;
     const retrySince = event.kind === "manual" && !old ? event.retrySince : undefined;
     if (tokenId && retrySince) {
       const [same] = await tx
@@ -315,10 +349,22 @@ export async function createExpense(
       entity: { type: "expense", id: row.id },
       detail: { source, ...(old ? { supersedesId: old.id } : {}), ...(accountId ? { accountId } : {}) },
     });
-    // A bank purchase tied to the old version follows the new one.
-    if (old && event.kind !== "bank") await followEdit(tx, old, row, actor);
+    // A bank purchase tied to the old version follows the new one, and so
+    // does a card payment it holds.
+    if (old) {
+      await followEdit(tx, old, row, actor);
+      await followPayment(tx, old, row);
+    }
     return row;
   });
+}
+
+async function ensureCardPaymentCategory(tx: Db, householdId: string): Promise<string> {
+  await tx
+    .insert(category)
+    .values({ householdId, ...CARD_PAYMENT_CATEGORY })
+    .onConflictDoNothing();
+  return CARD_PAYMENT_CATEGORY.slug;
 }
 
 function isUniqueViolation(e: unknown): boolean {
@@ -591,6 +637,7 @@ export async function voidExpense(db: Db, actor: Member, expenseId: string, via:
       entity: { type: "expense", id: row.id },
       detail: { was: row.status },
     });
+    await dropPayment(tx, row, actor);
     await releaseTie(tx, row, actor);
   });
 }
@@ -620,6 +667,15 @@ export async function editExpense(
 ): Promise<ExpenseWithShares> {
   const old = await getExpense(db, actor.householdId, expenseId);
   if (!isLive(old)) throw new UserError(`that expense is ${old.status}; nothing was changed`);
+  // What a card payment still shares is the amount paid less the purchases
+  // a review took out of it; only a review changes it.
+  if (edit.totalCents !== old.totalCents || edit.date !== old.date) {
+    const [held] = await db
+      .select({ id: cardPayment.id })
+      .from(cardPayment)
+      .where(and(eq(cardPayment.expenseId, old.id), eq(cardPayment.householdId, actor.householdId)));
+    if (held) throw new UserError("a card payment's amount and date come from the bank; to take purchases out of it, review the card in Accounts");
+  }
   return createExpense(db, actor.householdId, { kind: "manual", actor, ...edit, today, replaces: old, agentTokenId: via.agentTokenId });
 }
 

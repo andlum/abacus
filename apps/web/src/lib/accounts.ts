@@ -195,6 +195,8 @@ export async function insertBankAccount(
       name,
       lastFour,
       createdBy: actor.id,
+      // A new card shares nothing until its owner says it is shared.
+      cardMode: "personal",
       bankConnectionId: input.bankConnectionId,
       plaidAccountId: input.plaidAccountId,
     })

@@ -354,6 +354,9 @@ export const bankConnection = pgTable(
 export const ACCOUNT_KINDS = ["personal", "business"] as const;
 export type AccountKind = (typeof ACCOUNT_KINDS)[number];
 
+export const CARD_MODES = ["shared", "personal"] as const;
+export type CardMode = (typeof CARD_MODES)[number];
+
 // Where a cost was paid from: a credit card, a bank account, cash. Named by
 // the group; one nobody uses any more is archived, not deleted, and the
 // costs paid from it keep it.
@@ -372,8 +375,17 @@ export const account = pgTable(
     bankConnectionId: uuid("bank_connection_id"),
     plaidAccountId: text("plaid_account_id"),
     // "Everything on this card is shared": each new transaction becomes an
-    // expense at once. Off, they wait in To sort for the connection's owner.
+    // expense at once. Kept for cards that had it on before card review;
+    // the switch is no longer offered, only turned off.
     shareAll: boolean("share_all").notNull().default(false),
+    // For a card from a bank connection: `shared`, whose payments become a
+    // shared expense, or `personal`, whose payments are only recorded.
+    // Purchases get in only through a review (lib/card-review.ts). Null for
+    // an account that is not from a bank. A change applies to payments
+    // that post from then on.
+    cardMode: text("card_mode", { enum: CARD_MODES }),
+    // The last day a personal card was reviewed to. Null until the first.
+    reviewedThrough: isoDate("reviewed_through"),
     archivedAt: timestamp("archived_at", { withTimezone: true }),
     createdAt: createdAt(),
     createdBy: uuid("created_by")
@@ -399,6 +411,8 @@ export const account = pgTable(
     check("account_name_present", sql`length(trim(${t.name})) > 0`),
     check("account_last_four", sql`${t.lastFour} is null or ${t.lastFour} ~ '^[0-9]{4}$'`),
     check("account_kind", sql`${t.kind} is null or ${t.kind} in (${inList(ACCOUNT_KINDS)})`),
+    check("account_card_mode", sql`${t.cardMode} is null or ${t.cardMode} in (${inList(CARD_MODES)})`),
+    check("account_card_mode_bank", sql`${t.cardMode} is null or ${t.bankConnectionId} is not null`),
   ],
 );
 
@@ -526,8 +540,9 @@ export const importBatch = pgTable("import_batch", {
 export const EXPENSE_STATUSES = ["posted", "unassigned", "needs_amount", "superseded", "void", "proposed", "rejected"] as const;
 // `agent` stays on an expense after it is confirmed, so it is always clear
 // that a person did not type it. `bank` came from a connected card
-// (lib/bank.ts).
-export const EXPENSE_SOURCES = ["template", "manual", "import", "agent", "bank"] as const;
+// (lib/bank.ts). `card_payment` is the payment to a shared card
+// (lib/card-review.ts).
+export const EXPENSE_SOURCES = ["template", "manual", "import", "agent", "bank", "card_payment"] as const;
 // Where the rule came from: a rule for this recurring cost, for its
 // category, the household's own default, the built-in 50/50, or a split
 // chosen by the person entering the expense.
@@ -665,10 +680,20 @@ export const bankTransaction = pgTable(
     // Set when its owner said a recurring cost it was tied to is not this
     // purchase: it is never tied automatically again (lib/bank-match.ts).
     noAutoTie: boolean("no_auto_tie").notNull().default(false),
+    // The shared card payment this purchase was taken out of in a review.
+    // A trigger (see the card review migration) keeps the purchases taken
+    // out of one payment from adding up to more than it.
+    cardPaymentId: uuid("card_payment_id"),
     createdAt: createdAt(),
   },
   (t) => [
     unique("bank_transaction_plaid_id").on(t.plaidTransactionId),
+    foreignKey({
+      name: "bank_transaction_card_payment_fk",
+      columns: [t.householdId, t.cardPaymentId],
+      foreignColumns: [cardPayment.householdId, cardPayment.id],
+    }),
+    check("bank_transaction_card_payment", sql`${t.cardPaymentId} is null or ${t.state} = 'added'`),
     foreignKey({
       name: "bank_transaction_connection_fk",
       columns: [t.householdId, t.connectionId],
@@ -692,6 +717,47 @@ export const bankTransaction = pgTable(
     uniqueIndex("bank_transaction_one_tie").on(t.expenseId).where(sql`${t.state} = 'added'`),
     // To sort, for each connection.
     index("bank_transaction_waiting").on(t.connectionId, t.date).where(sql`${t.state} = 'to_sort'`),
+  ],
+);
+
+// A payment to a connected card, recorded when it posts (lib/bank.ts). On a
+// shared card it becomes an expense; on a personal card it is only shown on
+// the card's page. The amount paid never changes. `expense_id` is the live
+// expense holding what is still shared: it moves to the new row each time
+// that expense is superseded, and is null on a personal card and once the
+// expense is voided.
+export const cardPayment = pgTable(
+  "card_payment",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    householdId: householdRef(),
+    accountId: uuid("account_id").notNull(),
+    plaidTransactionId: text("plaid_transaction_id").notNull(),
+    date: isoDate("date").notNull(),
+    amountCents: cents("amount_cents").notNull(),
+    // The card's mode when the payment posted.
+    mode: text("mode", { enum: CARD_MODES }).notNull(),
+    expenseId: uuid("expense_id"),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    unique("card_payment_household_id").on(t.householdId, t.id),
+    unique("card_payment_plaid_id").on(t.plaidTransactionId),
+    foreignKey({
+      name: "card_payment_account_fk",
+      columns: [t.householdId, t.accountId],
+      foreignColumns: [account.householdId, account.id],
+    }),
+    foreignKey({
+      name: "card_payment_expense_fk",
+      columns: [t.householdId, t.expenseId],
+      foreignColumns: [expense.householdId, expense.id],
+    }),
+    check("card_payment_amount", sql`${t.amountCents} > 0`),
+    check("card_payment_mode", sql`${t.mode} in (${inList(CARD_MODES)})`),
+    check("card_payment_personal", sql`${t.mode} = 'shared' or ${t.expenseId} is null`),
+    uniqueIndex("card_payment_expense").on(t.expenseId).where(sql`${t.expenseId} is not null`),
+    index("card_payment_account_date").on(t.accountId, t.date),
   ],
 );
 
@@ -784,6 +850,7 @@ export type Settlement = typeof settlement.$inferSelect;
 export type Reimbursement = typeof reimbursement.$inferSelect;
 export type BankConnection = typeof bankConnection.$inferSelect;
 export type BankTransaction = typeof bankTransaction.$inferSelect;
+export type CardPayment = typeof cardPayment.$inferSelect;
 
 // A credential for the API: a phone app, or a script a self-hoster runs. It
 // acts as its member with that member's full rights, so it is not for agents;

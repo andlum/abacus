@@ -210,6 +210,10 @@ export function describe(e: AuditEntry, l: Lookups): ActivityItem {
       return { ...base, text: `Archived ${acct}`, href: "/settings/accounts" };
     case "account.restored":
       return { ...base, text: `Restored ${acct}`, href: "/settings/accounts" };
+    case "account.card_mode_changed":
+      return { ...base, text: e.detail.to === "shared" ? `Made ${acct} a shared card` : `Made ${acct} a personal card`, href: "/accounts" };
+    case "card_review.submitted":
+      return { ...base, text: `Reviewed purchases on ${acct}`, href: "/accounts" };
     case "account.share_all_changed":
       return { ...base, text: e.detail.on === true ? `Set ${acct} to add every purchase` : `Set ${acct} to wait for each purchase to be sorted`, href: "/settings/accounts" };
     // Card activity is the connection owner's own: these say what happened,
@@ -224,6 +228,12 @@ export function describe(e: AuditEntry, l: Lookups): ActivityItem {
       return { ...base, text: "Disconnected a bank", href: "/settings/accounts" };
     case "bank_transaction.added":
       return { ...base, text: "Added a card purchase as an expense" };
+    case "bank_transaction.cleared_for_review":
+      return { ...base, text: "Cleared a card transaction waiting to be sorted" };
+    case "bank_transaction.put_back":
+      return { ...base, text: "Put a card purchase back into its card payment" };
+    case "card_payment.recorded":
+      return { ...base, text: "A card payment came in" };
     case "bank_transaction.dismissed":
       return { ...base, text: "Set aside a card transaction" };
     case "bank_transaction.restored":
@@ -272,10 +282,18 @@ export function describe(e: AuditEntry, l: Lookups): ActivityItem {
 
 // Left out of the feed every member sees: a sign-in that matched nobody,
 // and the owner's own sorting of their card transactions.
-const PRIVATE_TO_ACTOR = new Set(["member.link_rejected", "bank_transaction.dismissed", "bank_transaction.restored"]);
+// A card payment is shown on its owner's card page, and a shared one is in
+// the Ledger as an expense; neither needs a line of its own.
+const PRIVATE_TO_ACTOR = new Set([
+  "member.link_rejected",
+  "bank_transaction.dismissed",
+  "bank_transaction.restored",
+  "bank_transaction.cleared_for_review",
+  "card_payment.recorded",
+]);
 
 // Card purchases tied to recurring costs: only the connection's owner reads these.
-const OWNER_ONLY = new Set(["bank_transaction.tied", "bank_transaction.retied", "bank_transaction.untied"]);
+const OWNER_ONLY = new Set(["bank_transaction.tied", "bank_transaction.retied", "bank_transaction.untied", "bank_transaction.put_back"]);
 
 export async function recentActivity(db: Db, householdId: string, names: Map<string, string>, limit: number, viewer?: Member) {
   const recent = (await recentAudit(db, householdId, limit)).filter((e) => !PRIVATE_TO_ACTOR.has(e.action));
