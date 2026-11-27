@@ -33,6 +33,7 @@ export const AUDIT_ACTIONS = [
   "bank_transaction.tied",
   "bank_transaction.untied",
   "card_payment.recorded",
+  "card_payment.shared",
   "card_review.submitted",
   "category.added",
   "category.archived",

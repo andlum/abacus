@@ -224,6 +224,8 @@ struct CardReviewLine: Codable, Identifiable, Hashable, Sendable {
     let amountCents: Int
     let description: String
     let moneyIn: Bool
+    // Money in that is a payment to the card, not a refund.
+    let cardPayment: Bool
     let addedExpenseId: String?
     let suggestion: Suggestion?
     let ticked: Bool
@@ -243,6 +245,28 @@ struct CardReview: Codable, Sendable {
     let payment: CardPayment?
     let payments: [CardPayment]
     let lines: [CardReviewLine]
+}
+
+// GET /accounts/{id}/payments/past: a shared card's payments of the last 90
+// days that are not shared yet.
+struct PastCardPayment: Codable, Identifiable, Hashable, Sendable {
+    let plaidTransactionId: String
+    let date: String
+    // What was paid, positive.
+    let amountCents: Int
+    let description: String
+    // The payment recorded while the card was personal; nil when never seen.
+    let paymentId: String?
+    var id: String { plaidTransactionId }
+}
+
+struct PastCardPayments: Codable, Sendable {
+    let payments: [PastCardPayment]
+}
+
+// The body of POST /accounts/{id}/payments; it answers with the CardPayment.
+struct CardPaymentShare: Codable, Sendable {
+    var plaidTransactionId: String
 }
 
 // One purchase picked in a review. The split rule is left out until the app

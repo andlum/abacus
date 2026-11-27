@@ -21,7 +21,8 @@ const held = globalThis as typeof globalThis & { __abacusE2ePlaid?: BankRuntime 
 // Travel Card (4321). Each card's first sync is empty and its second brings a
 // $1,200.00 payment, so the payment arrives after the person has chosen
 // shared or personal (POST /api/e2e/sync runs the second one). Purchases are
-// read from the bank only when a review asks. Dates are relative to the real
+// read from the bank only when a review asks, and so are the payments, which
+// the bank holds too. Dates are relative to the real
 // clock, which is what the review page reads.
 function build(): BankRuntime {
   const fake = fakePlaid();
@@ -40,11 +41,13 @@ function build(): BankRuntime {
     txn("buy-1", { amount: 100, date: ago(9), merchant_name: "Grocer" }),
     txn("buy-2", { amount: 30, date: ago(6), merchant_name: "Hardware" }),
     txn("buy-3", { amount: 12, date: ago(4), merchant_name: "Bakery" }),
+    payment("pay-1", 1200, { date: ago(2) }),
   );
   fake.hold(
     "personal",
     txn("buy-4", { account_id: "acc-travel", amount: 45, date: ago(3), merchant_name: "Bookshop" }),
     txn("buy-5", { account_id: "acc-travel", amount: 8, date: ago(1), merchant_name: "Cafe" }),
+    payment("pay-2", 500, { account_id: "acc-travel", date: ago(2) }),
   );
   const plaid = {
     ...fake.plaid,

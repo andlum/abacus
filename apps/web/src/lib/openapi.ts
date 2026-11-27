@@ -70,7 +70,7 @@ export const openapi = {
       patch: {
         operationId: "setCardMode",
         summary: "Share a card's payments or keep them personal",
-        description: "Applies to payments synced from now on; earlier ones stay as they were. Only the card's owner may.",
+        description: "Payments synced from now on follow it; earlier ones can be shared by hand with `/accounts/{id}/payments`. Only the card's owner may.",
         parameters: [idPath("card")],
         requestBody: { required: true, ...json(ref("CardModeChange")) },
         responses: { "200": ok("The card as changed", ref("CardAccount")), ...failures, "404": error("Not one of your cards.") },
@@ -99,6 +99,29 @@ export const openapi = {
         parameters: [idPath("card")],
         requestBody: { required: true, ...json(ref("CardReviewSubmit")) },
         responses: { "200": ok("What was added", ref("CardReviewResult")), ...failures, "404": error("Not one of your cards.") },
+      },
+    },
+    "/accounts/{id}/payments/past": {
+      get: {
+        operationId: "getPastCardPayments",
+        summary: "A shared card's payments of the last 90 days that are not shared yet, read from the bank now",
+        description:
+          "Payments the sync never recorded, or recorded while the card was personal. Newest first. " +
+          "Answers 400 for a personal card, or when this server has no bank set up. Agent tokens cannot call it.",
+        parameters: [idPath("card")],
+        responses: { "200": ok("The payments", object({ payments: { type: "array", items: ref("PastCardPayment") } })), ...failures, "404": error("Not one of your cards.") },
+      },
+    },
+    "/accounts/{id}/payments": {
+      post: {
+        operationId: "shareCardPayment",
+        summary: "Share one earlier payment of a shared card",
+        description:
+          "The payment is read from the bank again and must be a posted dollar payment to this card in the last 90 days; the amount is never taken from the request. " +
+          "It becomes a shared expense you paid, split the usual way, and its review opens with `payment` set to the returned id. Answers 400 when it is already shared. Agent tokens cannot call it.",
+        parameters: [idPath("card")],
+        requestBody: { required: true, ...json(ref("CardPaymentShare")) },
+        responses: { "200": ok("The payment, now shared", ref("CardPayment")), ...failures, "404": error("Not one of your cards.") },
       },
     },
     "/balance": {
@@ -311,6 +334,14 @@ export const openapi = {
         expenseId: nullable({ ...uuid, description: "The shared expense this payment made. Null on a personal card." }),
         stillSharedCents: { ...cents, description: "What of the payment is still shared, after purchases were taken out of it." },
       }),
+      PastCardPayment: object({
+        plaidTransactionId: { type: "string" },
+        date,
+        amountCents: { ...cents, description: "What was paid, positive." },
+        description: { type: "string" },
+        paymentId: nullable({ ...uuid, description: "The payment the sync recorded while the card was personal. Null when it never saw it." }),
+      }),
+      CardPaymentShare: object({ plaidTransactionId: { type: "string", description: "From the list of earlier payments." } }),
       CardLine: object({
         id: uuid,
         name: { type: "string" },
@@ -341,6 +372,7 @@ export const openapi = {
         amountCents: { ...cents, description: "Negative for money in, which `moneyIn` also says." },
         description: { type: "string" },
         moneyIn: { type: "boolean", description: "A refund or a payment: shown, never picked." },
+        cardPayment: { type: "boolean", description: "Money in that is a payment to the card, not a refund." },
         addedExpenseId: nullable({ ...uuid, description: "The expense it already is, when added." }),
         suggestion: nullable(
           object({

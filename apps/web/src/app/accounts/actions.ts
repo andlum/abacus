@@ -2,19 +2,30 @@
 
 import { attempt, field, type ActionState } from "@/lib/action";
 import { bankRuntime, requireBank } from "@/lib/bank-link";
-import { setCardMode, submitReview, type ReviewPick } from "@/lib/card-review";
+import { setCardMode, sharePastPayment, submitReview, type ReviewPick } from "@/lib/card-review";
 import { previewSplit, type SplitPreview } from "@/lib/split-preview";
 import { UserError } from "@abacus/core/errors";
 import type { Rule } from "@abacus/core/split";
 import { requireHousehold } from "@/lib/session";
 
-// Shared or personal, for the card's payments from now on.
+// Shared or personal. Payments synced from now on follow it; earlier ones are
+// shared by hand (sharePastPaymentAction).
 export async function setCardModeAction(_: ActionState, form: FormData): Promise<ActionState> {
   return attempt(async ({ me, db }) => {
     requireBank(bankRuntime());
     const mode = field(form, "mode");
     if (mode !== "shared" && mode !== "personal") throw new UserError("choose shared or personal");
     await setCardMode(db, me, field(form, "accountId"), mode);
+  });
+}
+
+// Shares one earlier payment, then opens its review.
+export async function sharePastPaymentAction(_: ActionState, form: FormData): Promise<ActionState> {
+  return attempt(async ({ me, db }) => {
+    const bank = requireBank(bankRuntime());
+    const accountId = field(form, "accountId");
+    const p = await sharePastPayment(db, bank, me, accountId, field(form, "plaidTransactionId"), new Date());
+    return `/accounts/${accountId}/review?${new URLSearchParams({ payment: p.id })}`;
   });
 }
 

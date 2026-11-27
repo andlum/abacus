@@ -12,7 +12,7 @@ import { account, bankConnection, bankTransaction, cardPayment, expense, househo
 import type { Db } from "../db/types.ts";
 import { writeAudit } from "./audit.ts";
 import { BILL_DAYS, fittingExpenses, tieTransaction } from "./bank-match.ts";
-import { billSuggestions, description, NEEDS_KIND, plaidCents, type BankDeps } from "./bank.ts";
+import { billSuggestions, description, isCardPayment, NEEDS_KIND, plaidCents, type BankDeps } from "./bank.ts";
 import { lockPayment, lockShare, setStillShared } from "./card-payments.ts";
 import { createExpense, enterAmount, isLive } from "./expenses.ts";
 import { isUuid } from "./ids.ts";
@@ -23,6 +23,8 @@ import { openSecret } from "./secret-box.ts";
 // Plaid holds 90 days for a card connected without asking for more.
 export const REVIEW_DAYS = 30;
 export const WIDEST_DAYS = 730;
+// How far back a payment can be shared by hand after the card is made shared.
+export const PAST_PAYMENT_DAYS = 90;
 const PAGE = 500;
 
 const notYours = () => new UserError("that card is not one of yours");
@@ -65,13 +67,13 @@ export type CardLine = {
   latestPayment: PaymentLine | null;
 };
 
-async function paymentLines(db: Db, householdId: string, accountIds: string[], limit?: number): Promise<PaymentLine[]> {
+async function paymentLines(db: Db, householdId: string, accountIds: string[], limit?: number, only?: string): Promise<PaymentLine[]> {
   if (accountIds.length === 0) return [];
   const q = db
     .select({ p: cardPayment, total: expense.totalCents, status: expense.status })
     .from(cardPayment)
     .leftJoin(expense, eq(expense.id, cardPayment.expenseId))
-    .where(and(eq(cardPayment.householdId, householdId), inArray(cardPayment.accountId, accountIds)))
+    .where(and(eq(cardPayment.householdId, householdId), inArray(cardPayment.accountId, accountIds), only ? eq(cardPayment.id, only) : undefined))
     .orderBy(desc(cardPayment.date), desc(cardPayment.createdAt));
   const rows = limit ? await q.limit(limit) : await q;
   return rows.map(({ p, total, status }) => ({
@@ -83,6 +85,11 @@ async function paymentLines(db: Db, householdId: string, accountIds: string[], l
     expenseId: p.expenseId,
     stillSharedCents: status && isLive({ status }) ? (total ?? 0) : 0,
   }));
+}
+
+// One payment as the screens show it.
+export async function paymentLine(db: Db, p: CardPayment): Promise<PaymentLine> {
+  return (await paymentLines(db, p.householdId, [p.accountId], 1, p.id))[0]!;
 }
 
 // The cards the actor connected, with each one's latest payment. Never asks
@@ -135,8 +142,9 @@ export async function cardAccount(db: Db, actor: Member, accountId: string): Pro
   };
 }
 
-// Whether a card's payments are shared. Only for payments synced from now
-// on: earlier ones stay as they were.
+// Whether a card's payments are shared. Payments the sync records from now on
+// follow it; earlier ones stay as they were until shared by hand
+// (sharePastPayment).
 export async function setCardMode(db: Db, actor: Member, accountId: string, mode: CardMode): Promise<Account> {
   return db.transaction(async (tx) => {
     const { a, c } = await ownCard(tx, actor, accountId, true);
@@ -191,7 +199,14 @@ async function rangeOf(tx: Db, a: Account, today: string, opts: { payment?: stri
 
 // ---- Reading purchases from Plaid -------------------------------------------
 
-type Fetched = { plaidTransactionId: string; date: string; amountCents: number; description: string };
+type Fetched = {
+  plaidTransactionId: string;
+  date: string;
+  amountCents: number;
+  description: string;
+  // Money in that is a payment to the card, not a refund.
+  cardPayment: boolean;
+};
 
 // The card's posted dollar transactions in the range, newest first.
 async function fetchRange(bank: BankDeps, c: BankConnection, a: Account, from: string, to: string): Promise<Fetched[]> {
@@ -213,7 +228,7 @@ async function fetchRange(bank: BankDeps, c: BankConnection, a: Account, from: s
   for (const t of all) {
     const cents = plaidCents(t.amount);
     if (t.pending || t.iso_currency_code !== "USD" || !cents || t.account_id !== a.plaidAccountId || t.date < from || t.date > to) continue;
-    out.push({ plaidTransactionId: t.transaction_id, date: t.date, amountCents: cents, description: description(t) });
+    out.push({ plaidTransactionId: t.transaction_id, date: t.date, amountCents: cents, description: description(t), cardPayment: cents < 0 && isCardPayment(t) });
   }
   return out.sort((x, y) => y.date.localeCompare(x.date) || x.plaidTransactionId.localeCompare(y.plaidTransactionId));
 }
@@ -318,6 +333,108 @@ export async function getReview(db: Db, bank: BankDeps, actor: Member, accountId
       };
     }),
   };
+}
+
+// ---- Earlier payments -------------------------------------------------------
+
+export type PastPayment = {
+  plaidTransactionId: string;
+  date: string;
+  // Positive: what was paid.
+  amountCents: number;
+  description: string;
+  // The recorded payment when the sync saw it while the card was personal.
+  paymentId: string | null;
+};
+
+function sharedCard(card: Card) {
+  reviewable(card);
+  if (card.a.cardMode !== "shared") throw new UserError("earlier payments can be shared only on a shared card");
+}
+
+// The card's posted payments in the last PAST_PAYMENT_DAYS, read from Plaid.
+async function fetchPayments(bank: BankDeps, card: Card, now: Date): Promise<Fetched[]> {
+  const today = todayIn(card.timezone, now);
+  return (await fetchRange(bank, card.c, card.a, addDays(today, -PAST_PAYMENT_DAYS), today)).filter((f) => f.cardPayment);
+}
+
+// Payments to a shared card that are not shared yet: the sync never saw them
+// (it saw them before this feature, or the card was personal and they were
+// missed), or it recorded them while the card was personal. Newest first.
+export async function findPastPayments(db: Db, bank: BankDeps, actor: Member, accountId: string, now: Date): Promise<PastPayment[]> {
+  const card = await ownCard(db, actor, accountId);
+  sharedCard(card);
+  const found = await fetchPayments(bank, card, now);
+  if (found.length === 0) return [];
+  const recorded = await db
+    .select()
+    .from(cardPayment)
+    .where(and(eq(cardPayment.householdId, actor.householdId), inArray(cardPayment.plaidTransactionId, found.map((f) => f.plaidTransactionId))));
+  const byPlaid = new Map(recorded.map((p) => [p.plaidTransactionId, p]));
+  return found
+    .filter((f) => byPlaid.get(f.plaidTransactionId)?.mode !== "shared")
+    .map((f) => ({
+      plaidTransactionId: f.plaidTransactionId,
+      date: f.date,
+      amountCents: -f.amountCents,
+      description: f.description,
+      paymentId: byPlaid.get(f.plaidTransactionId)?.id ?? null,
+    }));
+}
+
+// Shares one earlier payment by hand: it becomes an expense the card's owner
+// paid, split the usual way, and its review can then be opened. The payment
+// is read from Plaid again; nothing is taken from the client.
+export async function sharePastPayment(db: Db, bank: BankDeps, actor: Member, accountId: string, plaidTransactionId: string, now: Date): Promise<CardPayment> {
+  const first = await ownCard(db, actor, accountId);
+  sharedCard(first);
+  const t = (await fetchPayments(bank, first, now)).find((f) => f.plaidTransactionId === plaidTransactionId);
+  if (!t) throw new UserError(`that is not a payment to this card in the last ${PAST_PAYMENT_DAYS} days`);
+  const amountCents = -t.amountCents;
+  const by = { kind: "member" as const, memberId: actor.id };
+
+  return db.transaction(async (tx) => {
+    const card = await ownCard(tx, actor, accountId, true);
+    sharedCard(card);
+    const today = todayIn(card.timezone, now);
+    // Plaid ids are unique across every group, so this looks in all of them.
+    const lookup = async () => (await tx.select().from(cardPayment).where(eq(cardPayment.plaidTransactionId, t.plaidTransactionId)).for("update"))[0];
+    let p = await lookup();
+    let inserted = false;
+    if (!p) {
+      const [row] = await tx
+        .insert(cardPayment)
+        .values({ householdId: card.a.householdId, accountId: card.a.id, plaidTransactionId: t.plaidTransactionId, date: t.date, amountCents, mode: "shared" })
+        .onConflictDoNothing({ target: cardPayment.plaidTransactionId })
+        .returning();
+      inserted = !!row;
+      // When a sync stored it first, read what it stored.
+      p = row ?? (await lookup());
+    }
+    if (!p) throw new UserError("that payment could not be shared; try again");
+    if (p.householdId !== card.a.householdId || p.accountId !== card.a.id) throw new UserError("that payment is not on this card");
+    if (inserted) {
+      await writeAudit(tx, {
+        householdId: p.householdId,
+        actor: by,
+        action: "card_payment.recorded",
+        entity: { type: "card_payment", id: p.id },
+        detail: { accountId: card.a.id, mode: "shared" },
+      });
+    } else {
+      if (p.mode === "shared") throw new UserError("that payment is already shared");
+      [p] = await tx.update(cardPayment).set({ mode: "shared" }).where(eq(cardPayment.id, p.id)).returning();
+      await writeAudit(tx, {
+        householdId: p!.householdId,
+        actor: by,
+        action: "card_payment.shared",
+        entity: { type: "card_payment", id: p!.id },
+        detail: { was: "personal" },
+      });
+    }
+    await setStillShared(tx, p!, p!.amountCents, { a: card.a, owner: actor, by: actor, today });
+    return (await lockPayment(tx, p!.householdId, p!.id))!;
+  });
 }
 
 // ---- Submitting -------------------------------------------------------------

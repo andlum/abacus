@@ -53,6 +53,12 @@ What differs from the sections below:
   out makes a new version of the payment's expense with the smaller total
   (`createExpense` with `replaces`), as an edit does. No `expense_change`
   correction rows.
+- **Earlier payments can be shared by hand.** Switching a card to shared
+  lets its owner share payments from the last 90 days from the card page
+  (Find earlier payments), whether the sync never recorded them or recorded
+  them while the card was personal. Each is read from Plaid again, becomes
+  the usual shared expense, and opens its review. This reverses "applies from
+  now on"; a card's later payments still follow its mode as they sync.
 - **New cards start personal**, as existing ones do. The card's page asks.
 - **The "Card payment" category is made the first time a group needs it**,
   not added to every group's defaults, so groups with no card never see it.
