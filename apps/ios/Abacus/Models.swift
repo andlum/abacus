@@ -160,3 +160,111 @@ struct SplitPreview: Decodable, Sendable {
     let reason: String?
     let effect: String?
 }
+
+// ---- Card review ------------------------------------------------------------
+// GET /accounts, /accounts/{id}, /accounts/{id}/review and the POST that adds
+// the picked purchases. `cardMode` is "shared" or "personal".
+
+struct CardPayment: Codable, Identifiable, Hashable, Sendable {
+    let id: String
+    let accountId: String
+    let date: String
+    let amountCents: Int
+    let mode: String
+    // The shared expense the payment made; nil on a personal card.
+    let expenseId: String?
+    let stillSharedCents: Int
+}
+
+struct CardLine: Codable, Identifiable, Hashable, Sendable {
+    let id: String
+    let name: String
+    let lastFour: String?
+    let institutionName: String
+    let cardMode: String
+    let shareAll: Bool
+    let reviewedThrough: String?
+    let needsRelink: Bool
+    let latestPayment: CardPayment?
+}
+
+struct CardList: Codable, Sendable {
+    let accounts: [CardLine]
+}
+
+// One card with its payments, newest first.
+struct CardAccount: Codable, Identifiable, Hashable, Sendable {
+    let id: String
+    let name: String
+    let lastFour: String?
+    let institutionName: String
+    let cardMode: String
+    let shareAll: Bool
+    let reviewedThrough: String?
+    let needsRelink: Bool
+    let latestPayment: CardPayment?
+    let payments: [CardPayment]
+}
+
+// The body of PATCH /accounts/{id}.
+struct CardModeChange: Codable, Sendable {
+    var cardMode: String
+}
+
+struct CardReviewLine: Codable, Identifiable, Hashable, Sendable {
+    struct Suggestion: Codable, Hashable, Sendable {
+        // "recurring", "bill" or "added" (already an expense; picking it takes it out of the payment).
+        let kind: String
+        let expenseId: String
+        let name: String
+    }
+    let plaidTransactionId: String
+    let date: String
+    // Negative for money in.
+    let amountCents: Int
+    let description: String
+    let moneyIn: Bool
+    let addedExpenseId: String?
+    let suggestion: Suggestion?
+    let ticked: Bool
+    var id: String { plaidTransactionId }
+}
+
+struct CardReview: Codable, Sendable {
+    struct Card: Codable, Sendable {
+        let id: String
+        let name: String
+        let lastFour: String?
+        let cardMode: String
+    }
+    let account: Card
+    let from: String
+    let to: String
+    let payment: CardPayment?
+    let payments: [CardPayment]
+    let lines: [CardReviewLine]
+}
+
+// One purchase picked in a review. The split rule is left out until the app
+// has a model for rules; the server then uses the group's own.
+struct CardReviewPick: Codable, Sendable {
+    var plaidTransactionId: String
+    var description: String?
+    var category: String?
+    var tieTo: String?
+}
+
+// The body of POST /accounts/{id}/review.
+struct CardReviewSubmit: Codable, Sendable {
+    var payment: String?
+    var from: String?
+    var items: [CardReviewPick]
+}
+
+struct CardReviewResult: Codable, Sendable {
+    let expenses: [Expense]
+    // The shared payment's expense after the purchases came out of it.
+    let paymentExpense: Expense?
+    let from: String
+    let to: String
+}

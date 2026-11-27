@@ -67,7 +67,9 @@ export function ConnectBankButton({ connectionId, children }: { connectionId?: s
           setBusy(false);
           if (answer.error) return setError(`${connectionId ? "Not signed in" : "Not connected"}: ${answer.error}.`);
           toast(connectionId ? "Signed in again" : "Bank connected");
-          router.refresh();
+          // A new card is asked about first: shared or personal.
+          if (connectionId) router.refresh();
+          else router.push("/accounts");
         },
         onExit: (exit) => {
           handler.destroy();

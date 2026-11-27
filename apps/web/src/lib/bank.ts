@@ -15,6 +15,7 @@ import { parseCents } from "@abacus/core/money";
 import { insertBankAccount } from "./accounts.ts";
 import { writeAudit } from "./audit.ts";
 import { BILL_DAYS, dropWithdrawn, tieTransaction, tryTie, untie } from "./bank-match.ts";
+import { recordPayment } from "./card-payments.ts";
 import { createExpense, enterAmount } from "./expenses.ts";
 import { isUuid } from "./ids.ts";
 import { isPlaidError, needsRelinkError, PlaidError, type PlaidAccount, type PlaidApi, type PlaidSyncPage, type PlaidTransaction } from "./plaid.ts";
@@ -33,7 +34,15 @@ export function plaidCents(amount: number): number | null {
   return amount < 0 ? -cents : cents;
 }
 
-const description = (t: PlaidTransaction) => (t.merchant_name ?? t.name ?? "").replace(/\s+/gu, " ").trim() || "Card transaction";
+// Money in on a card that is a payment to it, not a refund. Plaid's own
+// category for it is LOAN_PAYMENTS_CREDIT_CARD_PAYMENT; some banks file the
+// card's side as a transfer in.
+export function isCardPayment(t: PlaidTransaction): boolean {
+  const c = t.personal_finance_category;
+  return !!c && (c.detailed === "LOAN_PAYMENTS_CREDIT_CARD_PAYMENT" || c.primary === "TRANSFER_IN");
+}
+
+export const description = (t: PlaidTransaction) => (t.merchant_name ?? t.name ?? "").replace(/\s+/gu, " ").trim() || "Card transaction";
 
 // ---- Connecting -------------------------------------------------------------
 
@@ -158,7 +167,18 @@ async function refuseDuplicate(db: Db, householdId: string, institutionName: str
 
 // ---- Syncing ----------------------------------------------------------------
 
-export type SkipReason = "pending" | "before_sync_from" | "not_usd" | "account_not_followed" | "zero_or_bad_amount" | "already_stored";
+// `purchase` is a purchase on a card that does not share everything: it is
+// not stored, and a review reads it from Plaid when asked. `refund` is other
+// money in on such a card, which is not a payment.
+export type SkipReason =
+  | "pending"
+  | "before_sync_from"
+  | "not_usd"
+  | "account_not_followed"
+  | "zero_or_bad_amount"
+  | "already_stored"
+  | "purchase"
+  | "refund";
 
 export type SyncSummary = {
   // Waiting to be sorted.
@@ -167,6 +187,8 @@ export type SyncSummary = {
   added: number;
   // Tied to a recurring cost the group already has, so no expense was made.
   tied: number;
+  // Payments to a card, recorded (lib/card-payments.ts).
+  payments: number;
   modified: number;
   removed: number;
   skipped: Record<SkipReason, number>;
@@ -179,9 +201,10 @@ const emptySummary = (): SyncSummary => ({
   toSort: 0,
   added: 0,
   tied: 0,
+  payments: 0,
   modified: 0,
   removed: 0,
-  skipped: { pending: 0, before_sync_from: 0, not_usd: 0, account_not_followed: 0, zero_or_bad_amount: 0, already_stored: 0 },
+  skipped: { pending: 0, before_sync_from: 0, not_usd: 0, account_not_followed: 0, zero_or_bad_amount: 0, already_stored: 0, purchase: 0, refund: 0 },
   outcome: "ok",
 });
 
@@ -295,6 +318,13 @@ export async function syncConnection(db: Db, bank: BankDeps, connectionId: strin
         continue;
       }
       const acct = followed.get(t.account_id)!;
+      if (!acct.shareAll) {
+        if (cents! > 0) summary.skipped.purchase++;
+        else if (!isCardPayment(t)) summary.skipped.refund++;
+        else if (await recordPayment(tx, acct, owner!, { plaidTransactionId: t.transaction_id, date: t.date, amountCents: -cents! }, today)) summary.payments++;
+        else summary.skipped.already_stored++;
+        continue;
+      }
       const [row] = await tx
         .insert(bankTransaction)
         .values({
@@ -473,7 +503,7 @@ export async function listToSort(db: Db, actor: Member): Promise<ToSort[]> {
 // Locks one of the actor's own transactions for the rest of `tx`, so a
 // second tap waits and then finds it already sorted. Another member's or
 // another group's reads as not found.
-const NEEDS_KIND = "first say whether this account is personal or business";
+export const NEEDS_KIND = "first say whether this account is personal or business";
 
 async function lockOwn(tx: Db, actor: Member, id: string) {
   const notYours = new UserError("that transaction is not one of yours to sort");

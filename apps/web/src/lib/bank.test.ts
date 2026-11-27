@@ -19,7 +19,7 @@ import {
 } from "./bank";
 import { recentActivity } from "./activity";
 import { seedCategories } from "./categories";
-import { PlaidError, type PlaidSyncPage, type PlaidTransaction } from "./plaid";
+import { PlaidError, type PlaidSyncPage } from "./plaid";
 import { ACCOUNTS, fakePlaid, txn } from "./testing/fake-plaid";
 import { openSecret } from "./secret-box";
 import { agree, createWorld, type World } from "./testing/world";
@@ -59,6 +59,30 @@ const byId = async (plaidId: string) => (await w.db.select().from(bankTransactio
 const connectionRow = async (id: string) => (await w.db.select().from(bankConnection).where(eq(bankConnection.id, id)))[0]!;
 const actionsFor = async (householdId = w.householdId) =>
   (await w.db.select().from(auditLog).where(eq(auditLog.householdId, householdId)).orderBy(auditLog.id)).map((a) => a.action);
+
+// A connection whose cards share everything, so each purchase is added at
+// once. Without it a purchase is not stored at all (card-review.test.ts).
+async function connectShared(who: Member = w.alex, token = "alex") {
+  const made = await connect(who, token);
+  for (const a of made.accounts) await setShareAll(w.db, who, a.id, true);
+  return made;
+}
+
+// A transaction waiting in To sort, put in directly: a purchase on a card
+// that does not share everything is no longer stored by the sync, but rows
+// like this still exist and are sorted the same way.
+async function seedWaiting(
+  made: { connection: { id: string }; accounts: { id: string }[] },
+  plaidId: string,
+  over: Partial<typeof bankTransaction.$inferInsert> = {},
+  householdId = w.householdId,
+) {
+  const [row] = await w.db
+    .insert(bankTransaction)
+    .values({ householdId, connectionId: made.connection.id, accountId: made.accounts[0]!.id, plaidTransactionId: plaidId, date: "2027-03-05", amountCents: 2000, description: "Corner Shop", ...over })
+    .returning();
+  return row!;
+}
 
 // Jo, in a group of their own.
 async function otherGroup(): Promise<Member> {
@@ -153,7 +177,9 @@ describe("connectBank", () => {
       ["Everyday Card", "1234", "acc-card", connection.id, false],
       ["Travel Card", "4321", "acc-travel", connection.id, false],
     ]);
-    expect(sync).toMatchObject({ toSort: 1, outcome: "ok" });
+    // The card does not share everything, so its purchase is not stored.
+    expect(sync).toMatchObject({ toSort: 0, added: 0, outcome: "ok" });
+    expect(sync!.skipped.purchase).toBe(1);
     expect(await actionsFor()).toEqual(["bank_connection.connected", "account.added", "account.added"]);
   });
 
@@ -192,12 +218,13 @@ describe("connectBank", () => {
 
 describe("syncConnection", () => {
   it("keeps only posted US-dollar transactions from followed accounts since the connection was made", async () => {
-    const { connection, accounts } = await connect();
+    const { connection, accounts } = await connectShared();
     await addAccount(w.db, w.alex, { name: "Spare" });
     await setAccountArchived(w.db, w.alex, accounts[1]!.id, true);
     fake.on("alex", "", {
       added: [
-        txn("t-ok"),
+        // Money in, which a card that shares everything still sorts by hand.
+        txn("t-ok", { amount: -20 }),
         txn("t-pending", { pending: true }),
         txn("t-old", { date: "2027-02-28" }),
         txn("t-cad", { iso_currency_code: "CAD" }),
@@ -220,22 +247,24 @@ describe("syncConnection", () => {
   });
 
   it("stores exact cents, and money in as a negative amount", async () => {
-    const { connection } = await connect();
+    await agree(w, FROM, { rules: [{ scope: "household", rule: { kind: "even" } }] });
+    const { connection } = await connectShared();
     fake.on("alex", "", {
       added: [txn("t-a", { amount: 19.99 }), txn("t-b", { amount: 0.07 }), txn("t-c", { amount: 1234.56 }), txn("t-d", { amount: -40 })],
       next_cursor: "c1",
     });
     await syncConnection(w.db, bank, connection.id, NOW);
     expect((await rows()).map((r) => [r.plaidTransactionId, r.amountCents, r.state, r.description])).toEqual([
-      ["t-a", 1999, "to_sort", "Corner Shop"],
-      ["t-b", 7, "to_sort", "Corner Shop"],
-      ["t-c", 123456, "to_sort", "Corner Shop"],
+      ["t-a", 1999, "added", "Corner Shop"],
+      ["t-b", 7, "added", "Corner Shop"],
+      ["t-c", 123456, "added", "Corner Shop"],
       ["t-d", -4000, "to_sort", "Corner Shop"],
     ]);
   });
 
   it("brings a transaction in once, however often Plaid sends it", async () => {
-    const { connection } = await connect();
+    await agree(w, FROM, { rules: [{ scope: "household", rule: { kind: "even" } }] });
+    const { connection } = await connectShared();
     fake.on("alex", "", { added: [txn("t1")], next_cursor: "c1" });
     fake.on("alex", "c1", { added: [txn("t1")], next_cursor: "c2" });
     await syncConnection(w.db, bank, connection.id, NOW);
@@ -246,7 +275,8 @@ describe("syncConnection", () => {
   });
 
   it("lets only one of two syncs racing from the same cursor write", async () => {
-    const { connection } = await connect();
+    await agree(w, FROM, { rules: [{ scope: "household", rule: { kind: "even" } }] });
+    const { connection } = await connectShared();
     fake.on("alex", "", { added: [txn("t1"), txn("t2")], next_cursor: "c1" });
     const results = await Promise.all([syncConnection(w.db, bank, connection.id, NOW), syncConnection(w.db, bank, connection.id, NOW)]);
     expect(results.map((r) => r.outcome).sort()).toEqual(["ok", "superseded"]);
@@ -254,16 +284,18 @@ describe("syncConnection", () => {
   });
 
   it("reads every page before writing, keeping the last cursor", async () => {
-    const { connection } = await connect();
+    await agree(w, FROM, { rules: [{ scope: "household", rule: { kind: "even" } }] });
+    const { connection } = await connectShared();
     fake.on("alex", "", { added: [txn("t1")], next_cursor: "c1", has_more: true });
     fake.on("alex", "c1", { added: [txn("t2")], next_cursor: "c2", has_more: true });
     fake.on("alex", "c2", { added: [txn("t3")], next_cursor: "c3" });
-    expect((await syncConnection(w.db, bank, connection.id, NOW)).toSort).toBe(3);
+    expect((await syncConnection(w.db, bank, connection.id, NOW)).added).toBe(3);
     expect((await connectionRow(connection.id)).cursor).toBe("c3");
   });
 
   it("stores nothing when a later page fails", async () => {
-    const { connection } = await connect();
+    await agree(w, FROM, { rules: [{ scope: "household", rule: { kind: "even" } }] });
+    const { connection } = await connectShared();
     fake.on("alex", "", { added: [txn("t1")], next_cursor: "c1", has_more: true });
     fake.on("alex", "c1", { added: [txn("t2")], next_cursor: "c2" });
     const real = fake.plaid.transactionsSync;
@@ -277,7 +309,8 @@ describe("syncConnection", () => {
   });
 
   it("starts again from the first cursor when Plaid's data changes mid-read, and gives up after three tries", async () => {
-    const { connection } = await connect();
+    await agree(w, FROM, { rules: [{ scope: "household", rule: { kind: "even" } }] });
+    const { connection } = await connectShared();
     fake.on("alex", "", { added: [txn("t1")], next_cursor: "c1", has_more: true });
     fake.on("alex", "c1", { added: [txn("t2")], next_cursor: "c2" });
     fake.syncCalls.length = 0;
@@ -287,7 +320,7 @@ describe("syncConnection", () => {
       if (input.cursor === "c1" && failures-- > 0) throw new PlaidError("/transactions/sync", 400, "TRANSACTIONS_SYNC_MUTATION_DURING_PAGINATION", "TRANSACTIONS_ERROR", "r");
       return real(input);
     };
-    expect((await syncConnection(w.db, bank, connection.id, NOW)).toSort).toBe(2);
+    expect((await syncConnection(w.db, bank, connection.id, NOW)).added).toBe(2);
     expect((await connectionRow(connection.id)).cursor).toBe("c2");
 
     const other = await connectApart(w.sam, "sam");
@@ -297,11 +330,12 @@ describe("syncConnection", () => {
 
   it("removes a waiting transaction, ignores ids never stored, and leaves one already added", async () => {
     await agree(w, FROM, { rules: [{ scope: "household", rule: { kind: "even" } }] });
-    const { connection } = await connect();
-    fake.on("alex", "", { added: [txn("t1"), txn("t2")], next_cursor: "c1" });
-    await syncConnection(w.db, bank, connection.id, NOW);
+    const bankMade = await connect();
+    const { connection } = bankMade;
+    await seedWaiting(bankMade, "t1");
+    await seedWaiting(bankMade, "t2");
     const made = await addFromBank(w.db, w.alex, (await byId("t2")).id, {}, TODAY);
-    fake.on("alex", "c1", { removed: [{ transaction_id: "t1" }, { transaction_id: "t2" }, { transaction_id: "t-pending-never-stored" }], next_cursor: "c2" });
+    fake.on("alex", "", { removed: [{ transaction_id: "t1" }, { transaction_id: "t2" }, { transaction_id: "t-pending-never-stored" }], next_cursor: "c2" });
     expect((await syncConnection(w.db, bank, connection.id, NOW)).removed).toBe(1);
     expect((await byId("t1")).state).toBe("removed");
     expect(await byId("t2")).toMatchObject({ state: "added", expenseId: made.id });
@@ -309,13 +343,14 @@ describe("syncConnection", () => {
   });
 
   it("changes date, amount and description only while a transaction waits", async () => {
-    const { connection } = await connect();
-    fake.on("alex", "", { added: [txn("t1"), txn("t2")], next_cursor: "c1" });
-    await syncConnection(w.db, bank, connection.id, NOW);
+    const made = await connect();
+    const { connection } = made;
+    await seedWaiting(made, "t1");
+    await seedWaiting(made, "t2");
     await dismissBankTransaction(w.db, w.alex, (await byId("t2")).id);
-    fake.on("alex", "c1", {
+    fake.on("alex", "", {
       modified: [txn("t1", { amount: 25.5, date: "2027-03-06", merchant_name: "Corner Shop Ltd" }), txn("t2", { amount: 99 })],
-      next_cursor: "c2",
+      next_cursor: "c1",
     });
     expect((await syncConnection(w.db, bank, connection.id, NOW)).modified).toBe(1);
     expect(await byId("t1")).toMatchObject({ amountCents: 2550, date: "2027-03-06", description: "Corner Shop Ltd", state: "to_sort" });
@@ -406,11 +441,17 @@ describe("accounts that share everything", () => {
   });
 
   it("only changes transactions synced from then on, and only for the owner", async () => {
-    const { connection, accounts } = await connect();
-    fake.on("alex", "", { added: [txn("t1")], next_cursor: "c1" });
-    await syncConnection(w.db, bank, connection.id, NOW);
+    await agree(w, FROM, { rules: [{ scope: "household", rule: { kind: "even" } }] });
+    const made = await connect();
+    const { connection, accounts } = made;
+    await seedWaiting(made, "t1");
     await expect(setShareAll(w.db, w.sam, accounts[0]!.id, true)).rejects.toThrow(/only the person who connected/);
     await setShareAll(w.db, w.alex, accounts[0]!.id, true);
+    expect((await byId("t1")).state).toBe("to_sort");
+    // A purchase synced from now on is added; the one already waiting is not.
+    fake.on("alex", "", { added: [txn("t2")], next_cursor: "c1" });
+    await syncConnection(w.db, bank, connection.id, NOW);
+    expect((await byId("t2")).state).toBe("added");
     expect((await byId("t1")).state).toBe("to_sort");
     expect(await actionsFor()).toContain("account.share_all_changed");
     const plain = await addAccount(w.db, w.alex, { name: "Cash" });
@@ -419,11 +460,11 @@ describe("accounts that share everything", () => {
 });
 
 describe("sorting", () => {
-  async function waiting(transactions: PlaidTransaction[] = [txn("t1"), txn("t-in", { amount: -30 })]) {
-    const { connection } = await connect();
-    fake.on("alex", "", { added: transactions, next_cursor: "c1" });
-    await syncConnection(w.db, bank, connection.id, NOW);
-    return connection;
+  async function waiting() {
+    const made = await connect();
+    await seedWaiting(made, "t1");
+    await seedWaiting(made, "t-in", { amountCents: -3000 });
+    return made.connection;
   }
 
   it("shows each person only what their own connections brought in", async () => {
@@ -488,9 +529,9 @@ describe("sorting", () => {
 
 describe("removeBankConnection", () => {
   it("tells Plaid, blanks the token, keeps the accounts and sets aside what was waiting", async () => {
-    const { connection, accounts } = await connect();
-    fake.on("alex", "", { added: [txn("t1")], next_cursor: "c1" });
-    await syncConnection(w.db, bank, connection.id, NOW);
+    const made = await connect();
+    const { connection, accounts } = made;
+    await seedWaiting(made, "t1");
     await expect(removeBankConnection(w.db, bank, w.sam, connection.id)).rejects.toThrow(/only the person who connected/);
 
     await removeBankConnection(w.db, bank, w.alex, connection.id);
@@ -566,11 +607,11 @@ describe("group scoping in the schema", () => {
 
 describe("a transaction the bank withdraws", () => {
   it("is withdrawn even when set aside, so it cannot be restored and counted beside the corrected charge", async () => {
-    const { connection } = await connect();
-    fake.on("alex", "", { added: [txn("t1", { amount: 50 })], next_cursor: "c1" });
-    await syncConnection(w.db, bank, connection.id, NOW);
+    const made = await connect();
+    const { connection } = made;
+    await seedWaiting(made, "t1", { amountCents: 5000 });
     await dismissBankTransaction(w.db, w.alex, (await byId("t1")).id);
-    fake.on("alex", "c1", { removed: [{ transaction_id: "t1" }], added: [txn("t2", { amount: 55 })], next_cursor: "c2" });
+    fake.on("alex", "", { removed: [{ transaction_id: "t1" }], added: [txn("t2", { amount: 55 })], next_cursor: "c2" });
     expect((await syncConnection(w.db, bank, connection.id, NOW)).removed).toBe(1);
     expect((await byId("t1")).state).toBe("removed");
     await expect(restoreBankTransaction(w.db, w.alex, (await byId("t1")).id)).rejects.toThrow(/not set aside/);
@@ -588,9 +629,7 @@ describe("an account in a business group", () => {
 
     await expect(setShareAll(w.db, boss!, card.id, true)).rejects.toThrow(/personal or business/);
 
-    fake.on("biz", "", { added: [txn("b1")], next_cursor: "c1" });
-    await syncConnection(w.db, bank, connection.id, NOW);
-    const id = (await byId("b1")).id;
+    const id = (await seedWaiting({ connection, accounts }, "b1", {}, h!.id)).id;
     await expect(addFromBank(w.db, boss!, id, {}, TODAY)).rejects.toThrow(/personal or business/);
 
     await w.db.update(account).set({ kind: "business" }).where(eq(account.id, card.id));
@@ -601,12 +640,13 @@ describe("an account in a business group", () => {
 
 describe("a change from the bank", () => {
   it("is held to the same currency and start date as a new transaction", async () => {
-    const { connection } = await connect();
-    fake.on("alex", "", { added: [txn("t1"), txn("t2")], next_cursor: "c1" });
-    await syncConnection(w.db, bank, connection.id, NOW);
-    fake.on("alex", "c1", {
+    const made = await connect();
+    const { connection } = made;
+    await seedWaiting(made, "t1");
+    await seedWaiting(made, "t2");
+    fake.on("alex", "", {
       modified: [txn("t1", { amount: 30, iso_currency_code: "CAD" }), txn("t2", { amount: 30, date: "2027-02-20" })],
-      next_cursor: "c2",
+      next_cursor: "c1",
     });
     const summary = await syncConnection(w.db, bank, connection.id, NOW);
     expect(summary.modified).toBe(0);
@@ -629,9 +669,7 @@ describe("a purchase added on its own", () => {
 
 describe("the group's activity feed", () => {
   it("leaves out a member setting aside or restoring their own card transactions", async () => {
-    const { connection } = await connect();
-    fake.on("alex", "", { added: [txn("t1")], next_cursor: "c1" });
-    await syncConnection(w.db, bank, connection.id, NOW);
+    await seedWaiting(await connect(), "t1");
     await dismissBankTransaction(w.db, w.alex, (await byId("t1")).id);
     await restoreBankTransaction(w.db, w.alex, (await byId("t1")).id);
     const texts = (await recentActivity(w.db, w.householdId, new Map(), 50)).map((a) => a.text);

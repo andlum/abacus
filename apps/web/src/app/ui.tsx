@@ -3,6 +3,7 @@ import Link from "next/link";
 import type { ReactNode } from "react";
 import { DEFAULT_CATEGORY, type Account, type Category, type Household, type Member } from "@/db/schema";
 import { accountLabel, KIND_LABELS } from "@/lib/accounts";
+import { bankRuntime } from "@/lib/bank-link";
 import { devAuthEnabled } from "@/lib/dev-auth";
 import { countsOn } from "@/lib/members";
 import { requireGroups } from "@/lib/session";
@@ -75,7 +76,7 @@ export async function Shell(props: {
       {/* The nav stays at the top as the page scrolls, with the page showing faintly through it. */}
       <nav aria-label="Main" className="sticky top-0 z-10 border-b border-border/60 bg-background/75 backdrop-blur-xl backdrop-saturate-150">
         <div className="relative mx-auto flex max-w-5xl items-center gap-1 overflow-x-auto px-4 py-2 [scrollbar-width:none] sm:px-6">
-          <MainNav />
+          <MainNav accounts={bankRuntime() !== null} />
           <LinkButton href="/expenses/new" className="ml-auto hidden sm:inline-flex">
             <Plus data-icon="inline-start" />
             Add expense

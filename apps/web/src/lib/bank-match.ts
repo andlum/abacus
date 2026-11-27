@@ -7,9 +7,10 @@
 // expense is edited. Nothing here changes an expense.
 import { and, asc, desc, eq, inArray, isNotNull, isNull, notExists, sql } from "drizzle-orm";
 import { addDays } from "@abacus/core/dates";
-import { bankConnection, bankTransaction, expense, type BankTransaction, type Expense, type Member } from "../db/schema.ts";
+import { account, bankConnection, bankTransaction, expense, type BankTransaction, type Expense, type Member } from "../db/schema.ts";
 import type { Db } from "../db/types.ts";
 import { writeAudit, type Actor } from "./audit.ts";
+import { putBack } from "./card-payments.ts";
 
 // How far apart a purchase and a recurring expense of the same amount may be
 // dated, either way, to count as the same money.
@@ -35,9 +36,15 @@ const sameAccount = (accountId: string) => sql`(${expense.accountId} is null or 
 // Live recurring expenses that could be this purchase: same group, same
 // total, paid by the connection's owner, dated within MATCH_DAYS, on the same
 // account when the expense names one, and not tied. Locked, so a void or an
-// edit committing at the same moment is seen.
-async function fittingExpenses(tx: Db, ownerId: string, t: BankTransaction): Promise<Expense[]> {
-  return tx
+// edit committing at the same moment is seen; `lock: false` only looks, for
+// a card review's suggestions.
+export async function fittingExpenses(
+  tx: Db,
+  ownerId: string,
+  t: Pick<BankTransaction, "householdId" | "amountCents" | "date" | "accountId">,
+  { lock = true }: { lock?: boolean } = {},
+): Promise<Expense[]> {
+  const q = tx
     .select()
     .from(expense)
     .where(
@@ -51,8 +58,8 @@ async function fittingExpenses(tx: Db, ownerId: string, t: BankTransaction): Pro
         sameAccount(t.accountId),
         untied(),
       ),
-    )
-    .for("update", { of: expense });
+    );
+  return lock ? q.for("update", { of: expense }) : q;
 }
 
 // Purchases waiting to be sorted that could be this expense: the same rule
@@ -154,7 +161,15 @@ async function tiedTo(tx: Db, expenseId: string): Promise<Tied | undefined> {
 // list to sort (set aside, if its bank is no longer connected). Never sorted
 // by whoever caused it: the owner's list is the owner's.
 export async function untie(tx: Db, row: Tied, by: Actor, detail: Record<string, unknown>, set: { noAutoTie?: boolean } = {}): Promise<void> {
-  const state = row.removedAt ? "dismissed" : "to_sort";
+  // Taken out of a shared card payment in a review: it goes back into it.
+  if (row.t.cardPaymentId) {
+    await putBack(tx, row.t, by);
+    return;
+  }
+  // Only a card that shares everything still has a list to sort; on any
+  // other a purchase let go of is set aside, and a review can pick it again.
+  const [card] = await tx.select({ shareAll: account.shareAll }).from(account).where(eq(account.id, row.t.accountId));
+  const state = row.removedAt || !card?.shareAll ? "dismissed" : "to_sort";
   await tx
     .update(bankTransaction)
     .set({ state, expenseId: null, sortedBy: state === "dismissed" ? row.ownerId : null, sortedAt: state === "dismissed" ? new Date() : null, ...set })
@@ -213,7 +228,8 @@ export async function followEdit(tx: Db, old: Expense, next: Expense, by: Member
 }
 
 // The bank withdrew purchases. Those tied to a recurring expense are dropped
-// from it and marked removed; the expense is not touched. Returns how many.
+// from it and marked removed; the expense is not touched, and one a review
+// took out of a shared payment goes back into it. Returns how many.
 export async function dropWithdrawn(tx: Db, connectionId: string, plaidIds: string[]): Promise<number> {
   if (plaidIds.length === 0) return 0;
   const tied = await tx
@@ -229,7 +245,9 @@ export async function dropWithdrawn(tx: Db, connectionId: string, plaidIds: stri
       ),
     );
   for (const { t } of tied) {
-    await tx.update(bankTransaction).set({ state: "removed", expenseId: null }).where(eq(bankTransaction.id, t.id));
+    // Taken out of a shared card payment: its amount goes back into it.
+    if (t.cardPaymentId) await putBack(tx, t, { kind: "system" });
+    await tx.update(bankTransaction).set({ state: "removed", expenseId: null, cardPaymentId: null }).where(eq(bankTransaction.id, t.id));
     await writeAudit(tx, {
       householdId: t.householdId,
       actor: { kind: "system" },

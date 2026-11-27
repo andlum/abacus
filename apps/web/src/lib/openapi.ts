@@ -2,12 +2,13 @@
 // an Android one later) is generated from it, so it must match what the
 // routes return: openapi.test.ts calls every route and checks each answer
 // against the schema here.
-import { ACCOUNT_KINDS, GROUP_KINDS, EXPENSE_SOURCES, EXPENSE_STATUSES, REIMBURSEMENT_STATUSES, RULE_SOURCES, SETTLEMENT_STATUSES } from "../db/schema.ts";
+import { ACCOUNT_KINDS, CARD_MODES, GROUP_KINDS, EXPENSE_SOURCES, EXPENSE_STATUSES, REIMBURSEMENT_STATUSES, RULE_SOURCES, SETTLEMENT_STATUSES } from "../db/schema.ts";
 
 type Schema = Record<string, unknown>;
 
 const ref = (name: string) => ({ $ref: `#/components/schemas/${name}` });
 const nullable = (s: Schema) => ({ ...s, type: [s.type, "null"] });
+const nullableRef = (name: string, description?: string) => ({ oneOf: [ref(name), { type: "null" }], ...(description ? { description } : {}) });
 const object = (properties: Record<string, Schema>, optional: string[] = []): Schema => ({
   type: "object",
   properties,
@@ -49,6 +50,55 @@ export const openapi = {
         operationId: "getMe",
         summary: "Who the token acts for, their household, its members and its categories",
         responses: { "200": ok("You", ref("Me")), "401": failures["401"] },
+      },
+    },
+    "/accounts": {
+      get: {
+        operationId: "listCardAccounts",
+        summary: "The credit cards you connected, each with its latest payment",
+        description: "Only your own cards. Never asks the bank, so it is quick. Agent tokens cannot call it.",
+        responses: { "200": ok("Your cards", object({ accounts: { type: "array", items: ref("CardLine") } })), "401": failures["401"] },
+      },
+    },
+    "/accounts/{id}": {
+      get: {
+        operationId: "getCardAccount",
+        summary: "One of your cards, with its payments, newest first",
+        parameters: [idPath("card")],
+        responses: { "200": ok("The card", ref("CardAccount")), "401": failures["401"], "404": error("Not one of your cards; another member's card reads the same.") },
+      },
+      patch: {
+        operationId: "setCardMode",
+        summary: "Share a card's payments or keep them personal",
+        description: "Applies to payments synced from now on; earlier ones stay as they were. Only the card's owner may.",
+        parameters: [idPath("card")],
+        requestBody: { required: true, ...json(ref("CardModeChange")) },
+        responses: { "200": ok("The card as changed", ref("CardAccount")), ...failures, "404": error("Not one of your cards.") },
+      },
+    },
+    "/accounts/{id}/review": {
+      get: {
+        operationId: "getCardReview",
+        summary: "A card's purchases for one payment or a date range, read from the bank now",
+        description:
+          "Opening a review is what reads the purchases; nothing is stored until a review is submitted. Money coming in is listed with `moneyIn` true and cannot be picked. " +
+          "Answers 400 when this server has no bank set up. Agent tokens cannot call it.",
+        parameters: [
+          idPath("card"),
+          { name: "payment", in: "query", required: false, schema: uuid, description: "A payment of this card, from `payments`: review the purchases it paid for." },
+          { name: "from", in: "query", required: false, schema: date, description: "Start the range on this day, to look further back." },
+        ],
+        responses: { "200": ok("The purchases", ref("CardReview")), ...failures, "404": error("Not one of your cards.") },
+      },
+      post: {
+        operationId: "submitCardReview",
+        summary: "Add the picked purchases as your expenses",
+        description:
+          "All or none. On a shared card the purchases are taken out of the payment's shared expense, which cannot go below zero. " +
+          "Each purchase is read from the bank again; amounts are never taken from the request. Agent tokens cannot call it.",
+        parameters: [idPath("card")],
+        requestBody: { required: true, ...json(ref("CardReviewSubmit")) },
+        responses: { "200": ok("What was added", ref("CardReviewResult")), ...failures, "404": error("Not one of your cards.") },
       },
     },
     "/balance": {
@@ -250,6 +300,88 @@ export const openapi = {
           description: "In a business group, whether the account is personal or business. Null in a household.",
         }),
         archived: { type: "boolean", description: "No longer offered for a new expense." },
+      }),
+      CardMode: { type: "string", enum: [...CARD_MODES], description: "`shared`: the card's payments become shared expenses. `personal`: they stay yours." },
+      CardPayment: object({
+        id: uuid,
+        accountId: uuid,
+        date,
+        amountCents: cents,
+        mode: ref("CardMode"),
+        expenseId: nullable({ ...uuid, description: "The shared expense this payment made. Null on a personal card." }),
+        stillSharedCents: { ...cents, description: "What of the payment is still shared, after purchases were taken out of it." },
+      }),
+      CardLine: object({
+        id: uuid,
+        name: { type: "string" },
+        lastFour: nullable({ type: "string" }),
+        institutionName: { type: "string" },
+        cardMode: ref("CardMode"),
+        shareAll: { type: "boolean", description: "Every purchase is shared as it comes in, so there is nothing to review." },
+        reviewedThrough: nullable({ ...date, description: "On a personal card, the day its review last reached." }),
+        needsRelink: { type: "boolean", description: "The bank must be signed in to again, in Settings → Bank." },
+        latestPayment: nullableRef("CardPayment"),
+      }),
+      CardAccount: object({
+        id: uuid,
+        name: { type: "string" },
+        lastFour: nullable({ type: "string" }),
+        institutionName: { type: "string" },
+        cardMode: ref("CardMode"),
+        shareAll: { type: "boolean" },
+        reviewedThrough: nullable(date),
+        needsRelink: { type: "boolean" },
+        latestPayment: nullableRef("CardPayment"),
+        payments: { type: "array", items: ref("CardPayment"), description: "Newest first; the latest 24." },
+      }),
+      CardModeChange: object({ cardMode: ref("CardMode") }),
+      CardReviewLine: object({
+        plaidTransactionId: { type: "string" },
+        date,
+        amountCents: { ...cents, description: "Negative for money in, which `moneyIn` also says." },
+        description: { type: "string" },
+        moneyIn: { type: "boolean", description: "A refund or a payment: shown, never picked." },
+        addedExpenseId: nullable({ ...uuid, description: "The expense it already is, when added." }),
+        suggestion: nullable(
+          object({
+            kind: { type: "string", enum: ["recurring", "bill", "added"], description: "added: already an expense of its own that no payment has taken out; picking it takes it out of this payment." },
+            expenseId: uuid,
+            name: { type: "string" },
+          }),
+        ),
+        ticked: { type: "boolean", description: "Whether the screen starts it ticked." },
+      }),
+      CardReview: object({
+        account: object({ id: uuid, name: { type: "string" }, lastFour: nullable({ type: "string" }), cardMode: ref("CardMode") }),
+        from: date,
+        to: date,
+        payment: nullableRef("CardPayment"),
+        payments: { type: "array", items: ref("CardPayment") },
+        lines: { type: "array", items: ref("CardReviewLine") },
+      }),
+      CardReviewPick: object(
+        {
+          plaidTransactionId: { type: "string" },
+          description: { type: "string", description: "Defaults to the bank's description." },
+          category: ref("Category"),
+          rule: ref("Rule"),
+          tieTo: { ...uuid, description: "The suggestion's expenseId: a recurring cost or a bill waiting for its amount is tied to the purchase; an expense already added is taken out of the payment. Nothing new is added." },
+        },
+        ["description", "category", "rule", "tieTo"],
+      ),
+      CardReviewSubmit: object(
+        {
+          payment: { ...uuid, description: "The payment being reviewed, as in the GET." },
+          from: { ...date, description: "The range start, as in the GET." },
+          items: { type: "array", items: ref("CardReviewPick"), minItems: 1 },
+        },
+        ["payment", "from"],
+      ),
+      CardReviewResult: object({
+        expenses: { type: "array", items: ref("Expense") },
+        paymentExpense: nullableRef("Expense", "The shared payment's expense after the purchases came out of it. Null on a personal card."),
+        from: date,
+        to: date,
       }),
       Category: {
         type: "string",

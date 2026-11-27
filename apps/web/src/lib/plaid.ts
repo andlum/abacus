@@ -46,7 +46,13 @@ export type PlaidTransaction = {
   pending: boolean;
   merchant_name?: string | null;
   name?: string | null;
+  // Plaid's category. A payment to the card reads
+  // LOAN_PAYMENTS_CREDIT_CARD_PAYMENT, or a TRANSFER_IN primary; a refund
+  // keeps its merchant's category.
+  personal_finance_category?: { primary: string; detailed: string } | null;
 };
+
+export type PlaidTransactionsGet = { transactions: PlaidTransaction[]; total_transactions: number };
 
 export type PlaidSyncPage = {
   added: PlaidTransaction[];
@@ -85,6 +91,9 @@ export interface PlaidApi {
   createLinkToken(input: { clientUserId: string; webhook?: string; redirectUri?: string; accessToken?: string }): Promise<{ linkToken: string; expiration: string }>;
   exchangePublicToken(publicToken: string): Promise<{ accessToken: string; itemId: string }>;
   transactionsSync(input: { accessToken: string; cursor?: string; count?: number }): Promise<PlaidSyncPage>;
+  // One page of an Item's transactions between two dates, both included,
+  // newest first. At most 500 a page; `offset` pages through the rest.
+  transactionsGet(input: { accessToken: string; startDate: string; endDate: string; accountIds?: string[]; count?: number; offset?: number }): Promise<PlaidTransactionsGet>;
   getAccounts(accessToken: string): Promise<PlaidAccount[]>;
   removeItem(accessToken: string): Promise<void>;
   // The bank an Item belongs to, as Plaid says, not as a browser claims.
@@ -190,6 +199,14 @@ export function plaidClient(config: Pick<BankConfig, "clientId" | "secret" | "en
         access_token: accessToken,
         ...(cursor ? { cursor } : {}),
         ...(count ? { count } : {}),
+      });
+    },
+    async transactionsGet({ accessToken, startDate, endDate, accountIds, count, offset }) {
+      return call<PlaidTransactionsGet>("/transactions/get", {
+        access_token: accessToken,
+        start_date: startDate,
+        end_date: endDate,
+        options: { ...(accountIds ? { account_ids: accountIds } : {}), count: count ?? 500, offset: offset ?? 0 },
       });
     },
     async getAccounts(accessToken) {

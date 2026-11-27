@@ -13,6 +13,12 @@ export default defineConfig({
   // `next dev` compiles each page the first time it is asked for. On a CI
   // runner that can take longer than the usual five seconds.
   expect: { timeout: process.env.CI ? 20_000 : 5_000 },
+  // card-review.spec.ts adds its own group, so it runs after the household
+  // story, which expects Alex and Sam to have exactly the one they start with.
+  projects: [
+    { name: "household", testMatch: /household\.spec/ },
+    { name: "card-review", testMatch: /card-review\.spec/, dependencies: ["household"] },
+  ],
   use: { baseURL: `http://localhost:${PORT}`, trace: "retain-on-failure" },
   webServer: {
     command: `node e2e/reset-db.ts && pnpm exec next dev -p ${PORT}`,
@@ -23,6 +29,8 @@ export default defineConfig({
     // ABACUS_COLD_DEV skips Turbopack's dev cache (next.config.ts).
     env: {
       ABACUS_E2E: "1",
+      // A fake Plaid for the card screens; honoured only together with ABACUS_E2E (src/lib/e2e-plaid.ts).
+      ABACUS_E2E_FAKE_PLAID: "1",
       ABACUS_DAILY_JOB: "0",
       ABACUS_COLD_DEV: "1",
       DATABASE_URL: "postgres://abacus:abacus@localhost:5432/abacus_e2e",

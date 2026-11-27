@@ -18,7 +18,8 @@ const SOURCE_TEXT: Record<string, string> = { template: "Recurring", manual: "By
 // The filters the form sends, in the address. `min` and `max` are typed as
 // amounts ("12.50") and become cents for the list.
 export const KEYS = ["month", "q", "from", "to", "category", "payer", "account", "accountKind", "source", "status", "min", "max"] as const;
-export type LedgerParams = Partial<Record<(typeof KEYS)[number] | "cursor", string | string[]>>;
+// `added` is not a filter: the ids a card review just added, marked as new.
+export type LedgerParams = Partial<Record<(typeof KEYS)[number] | "cursor" | "added", string | string[]>>;
 
 // With no filter given, the list shows this many days, today included.
 const DEFAULT_DAYS = 30;
@@ -40,6 +41,7 @@ export async function LedgerView({ ctx, raw }: { ctx: Ctx; raw: LedgerParams }) 
   const { me, db, home, members, categories, accounts, today } = ctx;
   const given = (key: keyof LedgerParams) => String([raw[key]].flat()[0] ?? "").trim();
 
+  const marked = new Set(given("added").split(",").filter(Boolean));
   const on = KEYS.filter((k) => given(k)).length;
   const filtered = on > 0;
   const since = filtered ? null : addDays(today, -(DEFAULT_DAYS - 1));
@@ -245,7 +247,7 @@ export async function LedgerView({ ctx, raw }: { ctx: Ctx; raw: LedgerParams }) 
           </p>
           <ul data-slot="list" className="my-3 space-y-3 sm:hidden">
             {list.items.map((item) => (
-              <LedgerCard key={item.id} item={item} members={members} categories={categories} accounts={accounts} back={back} today={today} />
+              <LedgerCard key={item.id} item={item} members={members} categories={categories} accounts={accounts} back={back} today={today} marked={marked} />
             ))}
           </ul>
           <table className="max-sm:hidden">
@@ -264,7 +266,7 @@ export async function LedgerView({ ctx, raw }: { ctx: Ctx; raw: LedgerParams }) 
             </thead>
             <tbody>
               {list.items.map((item) => (
-                <LedgerRow key={item.id} item={item} members={members} categories={categories} accounts={accounts} back={back} today={today} />
+                <LedgerRow key={item.id} item={item} members={members} categories={categories} accounts={accounts} back={back} today={today} marked={marked} />
               ))}
             </tbody>
           </table>

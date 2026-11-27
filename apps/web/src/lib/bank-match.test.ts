@@ -52,6 +52,17 @@ const cost = (name: string, over: { amountCents?: number | null; day?: number; p
     payerId: (over.payer ?? w.alex).id,
     startDate: FROM,
   });
+// The card shares everything, so a purchase that fits a recurring cost is
+// tied and any other is added at once. Without it the sync stores no
+// purchase at all (card-review.test.ts).
+const share = (...ids: string[]) => Promise.all((ids.length ? ids : [cardId]).map((id) => setShareAll(w.db, w.alex, id, true)));
+// A purchase waiting in To sort, put in directly; 80 dollars on the 5th unless said.
+const seed = (id: string, over: Partial<typeof bankTransaction.$inferInsert> = {}) =>
+  w.db
+    .insert(bankTransaction)
+    .values({ householdId: w.householdId, connectionId, accountId: cardId, plaidTransactionId: id, date: "2027-03-05", amountCents: 8000, description: "Corner Shop", ...over })
+    .returning()
+    .then(([row]) => row!);
 const post = () => postDue(w.db, w.householdId, TODAY);
 const expenses = () => w.db.select().from(expense);
 const tx = async (id: string) => (await w.db.select().from(bankTransaction).where(eq(bankTransaction.plaidTransactionId, id)))[0]!;
@@ -59,6 +70,7 @@ const actions = async () => (await w.db.select().from(auditLog)).map((a) => a.ac
 
 describe("a purchase that is a recurring cost", () => {
   it("is tied to the expense, with no second expense, and never appears in To sort", async () => {
+    await share();
     await cost("Internet");
     const [internet] = await post();
     const summary = await sync([txn("t1", { amount: 80, date: "2027-03-06" })]);
@@ -72,65 +84,81 @@ describe("a purchase that is a recurring cost", () => {
   });
 
   it.each([
-    ["4 days before", "2027-03-06", "added"],
-    ["4 days after", "2027-03-14", "added"],
-    ["5 days before", "2027-03-05", "to_sort"],
-    ["5 days after", "2027-03-15", "to_sort"],
+    ["4 days before", "2027-03-06", "tied"],
+    ["4 days after", "2027-03-14", "tied"],
+    ["5 days before", "2027-03-05", "its own expense"],
+    ["5 days after", "2027-03-15", "its own expense"],
   ])("%s the expense: %s is %s", async (_, date, state) => {
+    await share();
     await cost("Internet", { day: 10 });
-    await post();
+    const [internet] = await post();
     await sync([txn("t1", { amount: 80, date })]);
-    expect((await tx("t1")).state).toBe(state);
+    // Added either way; only inside the window is it the recurring cost's own expense.
+    expect((await tx("t1")).state).toBe("added");
+    expect(((await tx("t1")).expenseId === internet!.id)).toBe(state === "tied");
   });
 
   it("is not tied when the amount differs or another member paid", async () => {
+    await share();
     await cost("Internet");
     await cost("Gym", { payer: w.sam, amountCents: 3000 });
-    await post();
-    await sync([txn("t1", { amount: 80.01 }), txn("t2", { amount: 30 })]);
-    expect((await tx("t1")).state).toBe("to_sort");
-    expect((await tx("t2")).state).toBe("to_sort");
+    const costs = await post();
+    expect(await sync([txn("t1", { amount: 80.01 }), txn("t2", { amount: 30 })])).toMatchObject({ tied: 0, added: 2 });
+    for (const id of ["t1", "t2"]) expect(costs.map((c) => c.id)).not.toContain((await tx(id)).expenseId);
   });
 
   it("is left to sort when two expenses fit", async () => {
+    await share();
     await cost("Internet");
     await cost("Phone");
-    await post();
-    expect(await sync([txn("t1", { amount: 80 })])).toMatchObject({ tied: 0, toSort: 1 });
+    const costs = await post();
+    expect(await sync([txn("t1", { amount: 80 })])).toMatchObject({ tied: 0, added: 1 });
+    expect(costs.map((c) => c.id)).not.toContain((await tx("t1")).expenseId);
   });
 
-  it("ties neither of two same-amount purchases in one sync", async () => {
+  it("ties at most one of two same-amount purchases in one sync, never both", async () => {
+    await share();
     await cost("Internet");
-    await post();
-    expect(await sync([txn("t1", { amount: 80 }), txn("t2", { amount: 80 })])).toMatchObject({ tied: 0, toSort: 2 });
+    const [internet] = await post();
+    // On a card that shares everything the first is added before the second
+    // is looked at, so the second no longer has a rival and is tied.
+    expect(await sync([txn("t1", { amount: 80 }), txn("t2", { amount: 80 })])).toMatchObject({ tied: 1, added: 1 });
+    const tiedTo = [(await tx("t1")).expenseId, (await tx("t2")).expenseId].filter((id) => id === internet!.id);
+    expect(tiedTo).toHaveLength(1);
   });
 
   it("does not reuse an expense that is already tied", async () => {
+    await share();
     await cost("Internet");
-    await post();
+    const [internet] = await post();
     await sync([txn("t1", { amount: 80 })]);
-    expect(await sync([txn("t2", { amount: 80 })])).toMatchObject({ tied: 0, toSort: 1 });
-    expect((await tx("t1")).state).toBe("added");
+    expect(await sync([txn("t2", { amount: 80 })])).toMatchObject({ tied: 0, added: 1 });
+    expect((await tx("t1")).expenseId).toBe(internet!.id);
+    expect((await tx("t2")).expenseId).not.toBe(internet!.id);
   });
 
   it("ties nothing when one purchase is already waiting as the cost posts and a second fits", async () => {
     await cost("Internet");
-    await sync([txn("t1", { amount: 80 }), txn("t2", { amount: 80, date: "2027-03-07" })]);
+    await seed("t1");
+    await seed("t2", { date: "2027-03-07" });
     await post();
     expect((await tx("t1")).state).toBe("to_sort");
     expect((await tx("t2")).state).toBe("to_sort");
   });
 
   it("ties only a purchase on the account the cost is paid from", async () => {
-    const [card, other] = await w.db.select().from(account).where(eq(account.householdId, w.householdId));
+    const both = await w.db.select().from(account).where(eq(account.householdId, w.householdId));
+    const card = both.find((a) => a.id === cardId);
+    const other = both.find((a) => a.id !== cardId);
     await w.db.update(account).set({ name: "Other" }).where(eq(account.id, other!.id));
+    await share(card!.id, other!.id);
     await createTemplate(w.db, w.alex, { name: "Internet", amountCents: 8000, cadence: "monthly", dayOfMonth: 5, payerId: w.alex.id, accountId: other!.id, startDate: FROM });
-    await post();
+    const [internet] = await post();
     await sync([txn("t1", { amount: 80 })]);
     expect((await tx("t1")).accountId).toBe(card!.id);
-    expect((await tx("t1")).state).toBe("to_sort");
+    expect((await tx("t1")).expenseId).not.toBe(internet!.id);
     await sync([txn("t2", { amount: 80, account_id: other!.plaidAccountId! })]);
-    expect((await tx("t2")).state).toBe("added");
+    expect(await tx("t2")).toMatchObject({ state: "added", expenseId: internet!.id });
   });
 
   it("is not counted twice when the account shares everything", async () => {
@@ -145,7 +173,7 @@ describe("a purchase that is a recurring cost", () => {
 
   it("is tied when it arrived before the cost was posted", async () => {
     await cost("Internet");
-    await sync([txn("t1", { amount: 80, date: "2027-03-08" })]);
+    await seed("t1", { date: "2027-03-08" });
     expect((await tx("t1")).state).toBe("to_sort");
     const [internet] = await post();
     expect(await tx("t1")).toMatchObject({ state: "added", expenseId: internet!.id });
@@ -154,7 +182,8 @@ describe("a purchase that is a recurring cost", () => {
 
   it("is not tied backwards when two waiting purchases fit the cost", async () => {
     await cost("Internet");
-    await sync([txn("t1", { amount: 80 }), txn("t2", { amount: 80 })]);
+    await seed("t1");
+    await seed("t2");
     await post();
     expect((await tx("t1")).state).toBe("to_sort");
     expect((await tx("t2")).state).toBe("to_sort");
@@ -162,7 +191,7 @@ describe("a purchase that is a recurring cost", () => {
 
   it("leaves a purchase already added as its own expense alone when the cost posts later", async () => {
     await cost("Internet");
-    await sync([txn("t1", { amount: 80, date: "2027-03-08" })]);
+    await seed("t1", { date: "2027-03-08" });
     const own = await addFromBank(w.db, w.alex, (await tx("t1")).id, {}, TODAY);
     await post();
     expect(await expenses()).toHaveLength(2);
@@ -171,6 +200,7 @@ describe("a purchase that is a recurring cost", () => {
   });
 
   it("lets the bank withdraw it: the tie is dropped and the expense stays", async () => {
+    await share();
     await cost("Internet");
     const [internet] = await post();
     await sync([txn("t1", { amount: 80 })]);
@@ -182,6 +212,7 @@ describe("a purchase that is a recurring cost", () => {
   });
 
   it("goes back to To sort when the expense is voided", async () => {
+    await share();
     await cost("Internet");
     const [internet] = await post();
     await sync([txn("t1", { amount: 80 })]);
@@ -191,6 +222,7 @@ describe("a purchase that is a recurring cost", () => {
   });
 
   it("follows the expense when it is edited", async () => {
+    await share();
     await cost("Internet");
     const [internet] = await post();
     await sync([txn("t1", { amount: 80 })]);
@@ -203,6 +235,7 @@ describe("a purchase that is a recurring cost", () => {
   });
 
   it("shows its description only to the connection's owner", async () => {
+    await share();
     await cost("Internet");
     const [internet] = await post();
     await sync([txn("t1", { amount: 80, merchant_name: "Fibre Co" })]);
@@ -221,7 +254,8 @@ describe("a bill waiting for its amount", () => {
   it("is only offered, and choosing it sets the amount and ties the purchase", async () => {
     const bill = await electricity();
     expect(bill.status).toBe("needs_amount");
-    expect(await sync([txn("t1", { amount: 123.45, date: "2027-03-12" })])).toMatchObject({ tied: 0, toSort: 1 });
+    const row = await seed("t1", { amountCents: 12345, date: "2027-03-12" });
+    expect(row.state).toBe("to_sort");
     const waiting = await listToSort(w.db, w.alex);
     const offer = (await billSuggestions(w.db, w.alex, waiting)).get(waiting[0]!.id);
     expect(offer).toEqual([{ expenseId: bill.id, name: "Electricity", date: "2027-03-05" }]);
@@ -235,7 +269,8 @@ describe("a bill waiting for its amount", () => {
 
   it("is not offered beyond 10 days, for another payer, or in a list of more than three", async () => {
     await electricity();
-    await sync([txn("far", { amount: 50, date: "2027-03-16" }), txn("near", { amount: 50, date: "2027-03-14" })]);
+    await seed("far", { amountCents: 5000, date: "2027-03-16" });
+    await seed("near", { amountCents: 5000, date: "2027-03-14" });
     const waiting = await listToSort(w.db, w.alex);
     const offers = await billSuggestions(w.db, w.alex, waiting);
     expect(offers.get(waiting.find((t) => t.plaidTransactionId === "far")!.id)).toBeUndefined();
@@ -248,8 +283,7 @@ describe("a bill waiting for its amount", () => {
 
   it("cannot be taken by the other member, another group, or for a bill someone else pays", async () => {
     const bill = await electricity();
-    await sync([txn("t1", { amount: 50, date: "2027-03-12" })]);
-    const row = await tx("t1");
+    const row = await seed("t1", { amountCents: 5000, date: "2027-03-12" });
     await expect(matchBill(w.db, w.sam, row.id, bill.id)).rejects.toThrow(/not one of yours/);
     const [h] = await w.db.insert(household).values({ name: "Jo's place", timezone: "America/New_York" }).returning();
     await seedCategories(w.db, h!.id, "household");
@@ -269,6 +303,7 @@ describe("edits, privacy and mistakes", () => {
     editExpense(w.db, w.alex, id, { date, description: "Internet", totalCents: over.totalCents ?? 8000, payerId: over.payerId ?? w.alex.id }, TODAY);
 
   it("drops the tie when an edit changes the total", async () => {
+    await share();
     await cost("Internet");
     const [internet] = await post();
     await sync([txn("t1", { amount: 80 })]);
@@ -278,6 +313,7 @@ describe("edits, privacy and mistakes", () => {
   });
 
   it("drops the tie when an edit changes the payer", async () => {
+    await share();
     await cost("Internet");
     const [internet] = await post();
     await sync([txn("t1", { amount: 80 })]);
@@ -286,13 +322,14 @@ describe("edits, privacy and mistakes", () => {
   });
 
   it("keeps a bank-made expense's purchase with its edit", async () => {
-    await sync([txn("t1", { amount: 20 })]);
+    await seed("t1", { amountCents: 2000 });
     const own = await addFromBank(w.db, w.alex, (await tx("t1")).id, {}, TODAY);
     const next = await editExpense(w.db, w.alex, own.id, { date: own.date, description: "Shop", totalCents: 2500, payerId: w.alex.id }, TODAY);
     expect(await tx("t1")).toMatchObject({ state: "added", expenseId: next.id });
   });
 
   it("shows ties, unties and retied matches only to the connection's owner, and Sam's void does not make Sam the sorter", async () => {
+    await share();
     await cost("Internet");
     const [internet] = await post();
     await sync([txn("t1", { amount: 80 })]);
@@ -313,6 +350,7 @@ describe("edits, privacy and mistakes", () => {
   });
 
   it("sets a voided tie aside in the owner's name, not the partner's, when the bank is gone", async () => {
+    await share();
     await cost("Internet");
     const [internet] = await post();
     await sync([txn("t1", { amount: 80 })]);
@@ -322,6 +360,7 @@ describe("edits, privacy and mistakes", () => {
   });
 
   it("lets the owner say 'not this purchase', and never ties it again", async () => {
+    await share();
     await cost("Internet");
     const [internet] = await post();
     await sync([txn("t1", { amount: 80 })]);
@@ -353,8 +392,7 @@ describe("edits, privacy and mistakes", () => {
 
   it("does not offer or tie a purchase set aside from matching when its cost posts later", async () => {
     await cost("Internet");
-    await sync([txn("t1", { amount: 80 })]);
-    await w.db.update(bankTransaction).set({ noAutoTie: true });
+    await seed("t1", { noAutoTie: true });
     await post();
     expect((await tx("t1")).state).toBe("to_sort");
   });
@@ -363,7 +401,7 @@ describe("edits, privacy and mistakes", () => {
     await agree(w, FROM, { rules: [{ scope: "household", rule: { kind: "income_proportional" } }] });
     await cost("Electricity", { amountCents: null });
     const [bill] = await post();
-    await sync([txn("t1", { amount: 60, date: "2027-03-08" })]);
+    await seed("t1", { amountCents: 6000, date: "2027-03-08" });
     const done = await matchBill(w.db, w.alex, (await tx("t1")).id, bill!.id);
     expect(done).toMatchObject({ status: "unassigned", totalCents: 6000 });
     expect(await tx("t1")).toMatchObject({ state: "added", expenseId: bill!.id });

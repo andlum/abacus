@@ -60,7 +60,7 @@ function Detail({ e, members, back }: { e: ExpenseWithShares; members: Member[];
 
 // The list an expense is shown in, as a path: its page goes back there
 // once the expense is saved.
-export type ItemProps = { e: ExpenseWithShares; members: Member[]; categories: Category[]; accounts: Account[]; back?: string; today: string };
+export type ItemProps = { e: ExpenseWithShares; members: Member[]; categories: Category[]; accounts: Account[]; back?: string; today: string; isNew?: boolean };
 
 const editHref = (e: ExpenseWithShares, back?: string) => `/expenses/${e.id}${back ? `?${new URLSearchParams({ from: back })}` : ""}`;
 
@@ -76,7 +76,7 @@ function GoneTag({ e }: { e: ExpenseWithShares }) {
 // The name of the account an expense was paid from, if it says.
 const accountName = (e: ExpenseWithShares, accounts: Account[]) => accounts.find((a) => a.id === e.accountId)?.name;
 
-export function ExpenseRow({ e, members, categories, accounts, back, today }: ItemProps) {
+export function ExpenseRow({ e, members, categories, accounts, back, today, isNew }: ItemProps) {
   const payer = members.find((m) => m.id === e.payerId)?.displayName;
   const paidFrom = accountName(e, accounts);
   return (
@@ -84,7 +84,7 @@ export function ExpenseRow({ e, members, categories, accounts, back, today }: It
       <td className="whitespace-nowrap">{shortDate(e.date, today)}</td>
       <td className="[overflow-wrap:anywhere]">
         <Link href={editHref(e, back)}>{e.description}</Link> <CategoryNote category={e.category} categories={categories} />{" "}
-        <GoneTag e={e} /> <Detail e={e} members={members} back={back} />
+        <GoneTag e={e} /> {isNew && <span className="tag ok">new</span>} <Detail e={e} members={members} back={back} />
       </td>
       <td className="num">
         <Money cents={e.totalCents} />
@@ -105,7 +105,7 @@ export function ExpenseRow({ e, members, categories, accounts, back, today }: It
 
 // On a phone the table's columns would scroll out of view, so each expense
 // is a card with the shares underneath.
-export function ExpenseCard({ e, members, categories, accounts, back, today }: ItemProps) {
+export function ExpenseCard({ e, members, categories, accounts, back, today, isNew }: ItemProps) {
   const payer = members.find((m) => m.id === e.payerId)?.displayName;
   const paidFrom = accountName(e, accounts);
   return (
@@ -115,7 +115,7 @@ export function ExpenseCard({ e, members, categories, accounts, back, today }: I
           <Link href={editHref(e, back)} className={cn("font-medium", GONE_TAG[e.status] && "line-through")}>
             {e.description}
           </Link>{" "}
-          <CategoryNote category={e.category} categories={categories} /> <GoneTag e={e} />
+          <CategoryNote category={e.category} categories={categories} /> <GoneTag e={e} /> {isNew && <span className="tag ok">new</span>}
           {/* overflow-wrap: a long account name wraps instead of widening the card past a phone's screen. */}
           <div className="note [overflow-wrap:anywhere]">
             {shortDate(e.date, today)} · paid by {payer}
