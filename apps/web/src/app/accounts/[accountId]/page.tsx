@@ -38,7 +38,7 @@ export default async function CardPage({ params }: { params: Promise<{ accountId
         <h2 id="mode">Shared or personal</h2>
         <p className="note">
           A shared card&rsquo;s payments are split with the group, and you take purchases out of a payment when you review it. On a personal card nothing is
-          shared unless you pick it. This applies to payments from now on; earlier ones stay as they were.
+          shared unless you pick it. Payments that come in from now on follow your choice. Earlier ones can be shared from this page once the card is shared.
         </p>
         <ActionForm action={setCardModeAction} done="Saved" resetOnError>
           <input type="hidden" name="accountId" value={card.id} />
@@ -73,8 +73,11 @@ export default async function CardPage({ params }: { params: Promise<{ accountId
       ) : shared ? (
         <section aria-labelledby="payments" className="mt-6">
           <h2 id="payments">Payments</h2>
+          <p className="note mt-0">
+            <Link href={`/accounts/${card.id}/payments`}>Find earlier payments</Link> to share one that is not listed here.
+          </p>
           {card.payments.length === 0 ? (
-            <p className="note">No payment to this card has come in yet. Each one appears here as it is paid.</p>
+            <p className="note">No payment to this card is listed yet. Each new one appears here as it is paid.</p>
           ) : (
             <ul className="list-none divide-y divide-border/70 pl-0 space-y-0">
               {card.payments.map((p) => (

@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { account, auditLog, bankTransaction, cardPayment, expense, type Member } from "@/db/schema";
 import { getBalance } from "./balance";
 import { connectBank, syncConnection, type BankDeps } from "./bank";
-import { cardAccount, getReview, listCardAccounts, setCardMode, submitReview } from "./card-review";
+import { cardAccount, findPastPayments, getReview, listCardAccounts, setCardMode, sharePastPayment, submitReview } from "./card-review";
 import { editExpense, postDue, voidExpense } from "./expenses";
 import { createTemplate } from "./templates";
 import { fakePlaid, payment, txn } from "./testing/fake-plaid";
@@ -377,5 +377,144 @@ describe("the database", () => {
       .returning()
       .catch((e) => [e]);
     expect(t4).toBeInstanceOf(Error);
+  });
+});
+
+describe("earlier payments", () => {
+  // Plaid holds the card's purchases and a payment the sync never saw.
+  const heldPayment = (id = "p0", dollars = 1200, date = "2027-03-08", over: object = {}) => fake.hold("alex", ...PURCHASES, payment(id, dollars, { date, ...over }));
+  const live = async () => (await w.db.select().from(expense).where(eq(expense.status, "posted"))).map((e) => e.totalCents).sort((a, b) => a! - b!);
+
+  it("lists a payment the sync never saw, shares it as an expense Alex paid, and opens its review", async () => {
+    await setCardMode(w.db, w.alex, cardId, "shared");
+    heldPayment();
+    const past = await findPastPayments(w.db, bank, w.alex, cardId, NOW);
+    expect(past).toEqual([{ plaidTransactionId: "p0", date: "2027-03-08", amountCents: 120000, description: "Payment, thank you", paymentId: null }]);
+    expect(fake.getCalls.at(-1)).toMatchObject({ startDate: "2026-12-10", endDate: TODAY, accountIds: ["acc-card"] });
+    const p = await sharePastPayment(w.db, bank, w.alex, cardId, "p0", NOW);
+    expect(p).toMatchObject({ plaidTransactionId: "p0", mode: "shared", amountCents: 120000 });
+    expect(await share(p.expenseId)).toMatchObject({ totalCents: 120000, payerId: w.alex.id, status: "posted", description: "Card payment · Everyday Card 1234" });
+    expect(await samOwes()).toBe(60000);
+    expect(await findPastPayments(w.db, bank, w.alex, cardId, NOW)).toEqual([]);
+    const r = await getReview(w.db, bank, w.alex, cardId, { payment: p.id }, NOW);
+    expect(r).toMatchObject({ to: "2027-03-08", payment: { id: p.id, stillSharedCents: 120000 } });
+    // The payment itself is on the page, as money in.
+    expect(r.lines.map((l) => [l.plaidTransactionId, l.moneyIn, l.cardPayment])).toEqual([
+      ["p0", true, true],
+      ["t3", false, false],
+      ["r1", true, false],
+      ["t2", false, false],
+      ["t1", false, false],
+    ]);
+    const audit = await w.db.select().from(auditLog).where(eq(auditLog.action, "card_payment.recorded"));
+    expect(audit).toHaveLength(1);
+    expect(audit[0]).toMatchObject({ actorMemberId: w.alex.id, entityId: p.id });
+  });
+
+  it("lists payments newest first, and only card payments in the last 90 days", async () => {
+    await setCardMode(w.db, w.alex, cardId, "shared");
+    fake.hold(
+      "alex",
+      ...PURCHASES,
+      payment("old", 100, { date: "2026-12-11" }),
+      payment("new", 200, { date: "2027-03-09" }),
+      payment("ancient", 300, { date: "2026-12-09" }),
+      payment("other", 400, { account_id: "acc-travel" }),
+      // A refund keeps the merchant's category.
+      txn("r2", { amount: -50 }),
+    );
+    expect((await findPastPayments(w.db, bank, w.alex, cardId, NOW)).map((p) => [p.plaidTransactionId, p.amountCents])).toEqual([
+      ["new", 20000],
+      ["old", 10000],
+    ]);
+  });
+
+  it("shares a payment recorded while the card was personal, and its review shows a purchase added in a personal review as added", async () => {
+    fake.hold("alex", ...PURCHASES);
+    await syncIn(payment("p1", 500, { date: "2027-03-08" }));
+    const added = await submitReview(w.db, bank, w.alex, cardId, { items: [pick("t1")] }, NOW);
+    await setCardMode(w.db, w.alex, cardId, "shared");
+    const [personal] = await w.db.select().from(cardPayment);
+    expect(personal).toMatchObject({ mode: "personal", expenseId: null });
+    await expect(getReview(w.db, bank, w.alex, cardId, { payment: personal!.id }, NOW)).rejects.toThrow(/made while the card was personal/);
+    heldPayment("p1", 500);
+    expect(await findPastPayments(w.db, bank, w.alex, cardId, NOW)).toMatchObject([{ plaidTransactionId: "p1", paymentId: personal!.id }]);
+    const p = await sharePastPayment(w.db, bank, w.alex, cardId, "p1", NOW);
+    expect(p).toMatchObject({ id: personal!.id, mode: "shared", amountCents: 50000 });
+    expect((await share(p.expenseId))!.totalCents).toBe(50000);
+    expect(await samOwes()).toBe(5000 + 25000);
+    expect(await w.db.select().from(cardPayment)).toHaveLength(1);
+    const audit = await w.db.select().from(auditLog).where(eq(auditLog.action, "card_payment.shared"));
+    expect(audit).toHaveLength(1);
+    expect(audit[0]).toMatchObject({ actorMemberId: w.alex.id, entityId: p.id, detail: { was: "personal" } });
+
+    const r = await getReview(w.db, bank, w.alex, cardId, { payment: p.id }, NOW);
+    const t1 = r.lines.find((l) => l.plaidTransactionId === "t1")!;
+    expect(t1).toMatchObject({ ticked: true, suggestion: { kind: "added", expenseId: added.expenses[0]!.id } });
+    const out = await submitReview(w.db, bank, w.alex, cardId, { payment: p.id, items: [pick("t1", { tieTo: t1.suggestion!.expenseId })] }, NOW);
+    expect(out.expenses[0]!.id).toBe(added.expenses[0]!.id);
+    expect(out.paymentExpense!.totalCents).toBe(40000);
+    expect(await live()).toEqual([10000, 40000]);
+    expect(await samOwes()).toBe(5000 + 20000);
+  });
+
+  it("refuses a personal card, and another member's", async () => {
+    heldPayment();
+    await expect(findPastPayments(w.db, bank, w.alex, cardId, NOW)).rejects.toThrow(/shared card/);
+    await expect(sharePastPayment(w.db, bank, w.alex, cardId, "p0", NOW)).rejects.toThrow(/shared card/);
+    await setCardMode(w.db, w.alex, cardId, "shared");
+    await expect(findPastPayments(w.db, bank, w.sam, cardId, NOW)).rejects.toThrow(/not one of yours/);
+    await expect(sharePastPayment(w.db, bank, w.sam, cardId, "p0", NOW)).rejects.toThrow(/not one of yours/);
+    expect(await w.db.select().from(cardPayment)).toHaveLength(0);
+  });
+
+  it("refuses what is not a card payment of this card in the last 90 days, and stores nothing", async () => {
+    await setCardMode(w.db, w.alex, cardId, "shared");
+    fake.hold(
+      "alex",
+      ...PURCHASES,
+      payment("other", 400, { account_id: "acc-travel" }),
+      payment("ancient", 300, { date: "2026-12-09" }),
+      payment("pending", 300, { pending: true }),
+      payment("eur", 300, { iso_currency_code: "EUR" }),
+    );
+    for (const id of ["r1", "t1", "other", "ancient", "pending", "eur", "nope"]) {
+      await expect(sharePastPayment(w.db, bank, w.alex, cardId, id, NOW), id).rejects.toThrow(/not a payment to this card in the last 90 days/);
+    }
+    expect(await w.db.select().from(cardPayment)).toHaveLength(0);
+    expect(await w.db.select().from(expense)).toHaveLength(0);
+  });
+
+  it("refuses a payment already shared, and shares one only once", async () => {
+    const p = await sharedPaid();
+    heldPayment("p-2027-03-08");
+    await expect(sharePastPayment(w.db, bank, w.alex, cardId, "p-2027-03-08", NOW)).rejects.toThrow(/already shared/);
+    heldPayment();
+    const both = await Promise.allSettled([sharePastPayment(w.db, bank, w.alex, cardId, "p0", NOW), sharePastPayment(w.db, bank, w.alex, cardId, "p0", NOW)]);
+    expect(both.filter((b) => b.status === "fulfilled")).toHaveLength(1);
+    expect((both.find((b) => b.status === "rejected") as PromiseRejectedResult).reason.message).toMatch(/already shared/);
+    expect(await live()).toEqual([120000, 120000]);
+    expect(await samOwes()).toBe(120000);
+    expect((await share(p.expenseId))!.totalCents).toBe(120000);
+  });
+
+  it("is not posted twice when the sync later sees a payment shared by hand", async () => {
+    await setCardMode(w.db, w.alex, cardId, "shared");
+    heldPayment();
+    await sharePastPayment(w.db, bank, w.alex, cardId, "p0", NOW);
+    const out = await syncIn(payment("p0", 1200, { date: "2027-03-08" }));
+    expect(out.payments).toBe(0);
+    expect(out.skipped.already_stored).toBe(1);
+    expect(await live()).toEqual([120000]);
+    expect(await w.db.select().from(cardPayment)).toHaveLength(1);
+  });
+
+  it("refuses a payment recorded for a different card", async () => {
+    await setCardMode(w.db, w.alex, cardId, "shared");
+    heldPayment();
+    const [travel] = await w.db.select().from(account).where(eq(account.lastFour, "4321"));
+    await w.db.insert(cardPayment).values({ householdId: w.householdId, accountId: travel!.id, plaidTransactionId: "p0", date: "2027-03-08", amountCents: 120000, mode: "personal" });
+    await expect(sharePastPayment(w.db, bank, w.alex, cardId, "p0", NOW)).rejects.toThrow(/not on this card/);
+    expect(await live()).toEqual([]);
   });
 });

@@ -3,6 +3,8 @@
 import { randomBytes } from "node:crypto";
 import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
 import * as card from "@/app/api/v1/accounts/[id]/route";
+import * as pay from "@/app/api/v1/accounts/[id]/payments/route";
+import * as past from "@/app/api/v1/accounts/[id]/payments/past/route";
 import * as review from "@/app/api/v1/accounts/[id]/review/route";
 import * as cards from "@/app/api/v1/accounts/route";
 import { createApiToken } from "./api-tokens";
@@ -149,6 +151,54 @@ describe("a card's review", () => {
   });
 });
 
+describe("earlier payments", () => {
+  const PAST = "/accounts/{id}/payments/past";
+  const hold = () =>
+    fake.hold("alex", txn("t1", { amount: 100, date: "2027-03-02", merchant_name: "Grocer" }), payment("p0", 1200, { date: "2027-03-08" }), txn("r1", { amount: -15, date: "2027-03-05" }));
+
+  it("lists the unshared payments, shares one, and opens its review", async () => {
+    await call(card.PATCH, { method: "PATCH", body: { cardMode: "shared" } });
+    hold();
+    const list = await call(past.GET, { spec: PAST });
+    expect(list.status).toBe(200);
+    expect(list.body.payments).toEqual([{ plaidTransactionId: "p0", date: "2027-03-08", amountCents: 120000, description: "Payment, thank you", paymentId: null }]);
+
+    const done = await call(pay.POST, { body: { plaidTransactionId: "p0" }, spec: "/accounts/{id}/payments" });
+    expect(done.status).toBe(200);
+    expect(done.body).toMatchObject({ accountId: cardId, date: "2027-03-08", amountCents: 120000, mode: "shared", stillSharedCents: 120000 });
+    expect((await call(past.GET)).body.payments).toEqual([]);
+    const open = await call(review.GET, { query: `payment=${done.body.id}`, spec: "/accounts/{id}/review" });
+    expect(open.body.payment.id).toBe(done.body.id);
+    expect(open.body.lines.map((l: { plaidTransactionId: string; cardPayment: boolean }) => [l.plaidTransactionId, l.cardPayment])).toEqual([
+      ["p0", true],
+      ["r1", false],
+      ["t1", false],
+    ]);
+    expect((await call(card.GET)).body.payments.map((p: { id: string }) => p.id)).toEqual([done.body.id]);
+  });
+
+  it("answers 400 for a personal card, a payment already shared, and what is not a payment", async () => {
+    hold();
+    expect((await call(past.GET)).status).toBe(400);
+    expect((await call(pay.POST, { body: { plaidTransactionId: "p0" } })).status).toBe(400);
+    await call(card.PATCH, { method: "PATCH", body: { cardMode: "shared" } });
+    expect((await call(pay.POST, { body: { plaidTransactionId: "r1" } })).status).toBe(400);
+    expect((await call(pay.POST, { body: {} })).status).toBe(400);
+    expect((await call(pay.POST, { body: { plaidTransactionId: "p0" } })).status).toBe(200);
+    const twice = await call(pay.POST, { body: { plaidTransactionId: "p0" } });
+    expect(twice.status).toBe(400);
+    expect(twice.body.error).toMatch(/already shared/);
+  });
+
+  it("reads another member's card as not found", async () => {
+    await call(card.PATCH, { method: "PATCH", body: { cardMode: "shared" } });
+    hold();
+    expect((await call(past.GET, { token: samToken })).status).toBe(404);
+    expect((await call(pay.POST, { token: samToken, body: { plaidTransactionId: "p0" } })).status).toBe(404);
+    expect((await call(past.GET, { id: "not-an-id" })).status).toBe(404);
+  });
+});
+
 describe("agent tokens", () => {
   it("are refused by every card route", async () => {
     const { token } = await createMcpToken(w.db, w.alex, { name: "agent", permission: "write" });
@@ -157,5 +207,7 @@ describe("agent tokens", () => {
     expect((await call(card.PATCH, { token, method: "PATCH", body: { cardMode: "shared" } })).status).toBe(401);
     expect((await call(review.GET, { token })).status).toBe(401);
     expect((await call(review.POST, { token, body: { items: [{ plaidTransactionId: "t1" }] } })).status).toBe(401);
+    expect((await call(past.GET, { token })).status).toBe(401);
+    expect((await call(pay.POST, { token, body: { plaidTransactionId: "p0" } })).status).toBe(401);
   });
 });

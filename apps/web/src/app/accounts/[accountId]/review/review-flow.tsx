@@ -198,7 +198,13 @@ export function ReviewFlow({
                     {formatCents(Math.abs(l.amountCents))}
                   </span>
                 </div>
-                {l.moneyIn && <p className="note my-1">Money coming in cannot be picked.</p>}
+                {l.moneyIn && (
+                  <p className="note my-1">
+                    {l.cardPayment && review.account.cardMode === "personal"
+                      ? "A payment to the card. Make the card shared to share it."
+                      : "Money coming in cannot be picked."}
+                  </p>
+                )}
                 {l.addedExpenseId && (
                   <p className="note my-1">
                     <span className="tag ok">Added</span> <Link href={`/expenses/${l.addedExpenseId}`}>See the expense</Link>

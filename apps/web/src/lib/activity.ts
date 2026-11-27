@@ -234,6 +234,8 @@ export function describe(e: AuditEntry, l: Lookups): ActivityItem {
       return { ...base, text: "Put a card purchase back into its card payment" };
     case "card_payment.recorded":
       return { ...base, text: "A card payment came in" };
+    case "card_payment.shared":
+      return { ...base, text: "Shared an earlier card payment" };
     case "bank_transaction.dismissed":
       return { ...base, text: "Set aside a card transaction" };
     case "bank_transaction.restored":
@@ -290,6 +292,7 @@ const PRIVATE_TO_ACTOR = new Set([
   "bank_transaction.restored",
   "bank_transaction.cleared_for_review",
   "card_payment.recorded",
+  "card_payment.shared",
 ]);
 
 // Card purchases tied to recurring costs: only the connection's owner reads these.

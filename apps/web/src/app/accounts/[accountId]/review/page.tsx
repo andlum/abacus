@@ -3,7 +3,7 @@ import { notFound } from "next/navigation";
 import { UserError } from "@abacus/core/errors";
 import { DEFAULT_CATEGORY } from "@/db/schema";
 import { bankRuntime } from "@/lib/bank-link";
-import { getReview } from "@/lib/card-review";
+import { cardAccount, getReview } from "@/lib/card-review";
 import { requireHousehold } from "@/lib/session";
 import { LinkButton, Shell } from "../../../ui";
 import { cardName } from "../../card-text";
@@ -30,6 +30,8 @@ export default async function ReviewPage({ params, searchParams }: { params: Pro
     review = await getReview(db, bank, me, accountId, { payment, from }, new Date());
   } catch (e) {
     if (!(e instanceof UserError)) throw e;
+    // A shared card with no shared payment: earlier ones can be shared by hand.
+    const earlier = await cardAccount(db, me, accountId).then((c) => c.cardMode === "shared" && !c.shareAll && !c.payments.some((p) => p.mode === "shared"), () => false);
     return (
       <Shell {...ctx} title="Review transactions">
         <p role="alert" className="text-destructive">
@@ -39,6 +41,14 @@ export default async function ReviewPage({ params, searchParams }: { params: Pro
           <LinkButton href={`/accounts/${accountId}`} variant="outline" size="sm">
             Back to the card
           </LinkButton>
+          {earlier && (
+            <>
+              {" "}
+              <LinkButton href={`/accounts/${accountId}/payments`} variant="outline" size="sm">
+                Find earlier payments
+              </LinkButton>
+            </>
+          )}
         </p>
       </Shell>
     );

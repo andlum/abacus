@@ -118,4 +118,23 @@ test("a personal card: nothing reaches the Ledger until a review picks it", asyn
   await expect(page.getByRole("heading", { name: "Ledger" })).toBeVisible();
   await expect(ledger(page).getByRole("row").filter({ hasText: "Bookshop" })).toContainText("$45.00");
   await expect(ledger(page).getByText("Cafe")).toHaveCount(0);
+
+  // Made shared afterwards, the card's earlier $500.00 payment can be shared
+  // by hand, and its review opens on it.
+  await page.goto("/accounts");
+  await page.getByRole("link", { name: "Travel Card 4321" }).click();
+  await page.getByLabel("Shared card").check();
+  await page.getByRole("button", { name: "Save" }).click();
+  await expect(page.getByText("Saved")).toBeVisible();
+  await page.goto("/accounts");
+  await page.getByRole("link", { name: "Travel Card 4321" }).click();
+  await page.getByRole("link", { name: "Find earlier payments" }).click();
+  await expect(page.getByText("$500.00, made while the card was personal")).toBeVisible();
+  await page.getByRole("button", { name: "Share and review" }).click();
+  await expect(page).toHaveURL(/\/accounts\/[^/]+\/review\?payment=/);
+  await expect(page.getByRole("heading", { name: "Pick purchases to split" })).toBeVisible();
+  await expect(page.getByLabel(/Bookshop/)).toBeVisible();
+
+  await page.goto("/");
+  await expect(ledger(page).getByRole("row").filter({ hasText: "$500.00" })).toContainText("Card payment");
 });
