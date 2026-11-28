@@ -108,7 +108,7 @@ export function registerReadTools(server: McpServer, ctx: McpContext) {
         ? "This token can read, and add, edit and void expenses for you. What it writes counts at once."
         : "This token can only read. Expenses are added and changed by people in the Clementine app.",
       members: members.map(memberJson),
-      categories: (await listCategories(db, home.id)).map((c) => ({ slug: c.slug, label: c.label })),
+      categories: (await listCategories(db, home.id)).map((c) => ({ slug: c.slug, label: c.label, taxLine: c.taxLine, halfDeductible: c.halfDeductible })),
       accounts: (await listAccounts(db, home.id, { archived: true })).map((a) => ({
         id: a.id,
         name: a.name,

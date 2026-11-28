@@ -11,6 +11,7 @@ import {
   expense,
   expenseShare,
   expenseTemplate,
+  household,
   type Expense,
   type ExpenseTemplate,
   type Member,
@@ -31,11 +32,58 @@ import { dueBeforeStart, dueInMonth, type Due } from "./templates.ts";
 
 export type ExpenseWithShares = Expense & { shares: Record<string, number> };
 
+// What an expense can say beyond its amount. Each left out keeps what the
+// replaced expense said, or starts empty and at 100%.
+export type ExpenseDetail = {
+  // Who was paid, apart from the description. Blank clears it.
+  vendor?: string | null;
+  // What it was for. Blank clears it.
+  note?: string | null;
+  // How much of it was for the business, in basis points: 1 to 10000. Below
+  // 10000 only in a business group, and only with `useBasis`.
+  businessUseBp?: number;
+  // The one-line reason for a share below 100%. Dropped at 100%.
+  useBasis?: string | null;
+};
+
+export const WHOLE_BP = 10000;
+const DETAIL_MAX = 500;
+
+function cleanText(v: string | null | undefined, name: string): string | null {
+  const t = (v ?? "").trim();
+  if (t.length > DETAIL_MAX) throw new UserError(`the ${name} is too long: ${DETAIL_MAX} characters at most`);
+  return t || null;
+}
+
+// The four columns an expense is saved with: what was given, else what the
+// replaced expense had.
+async function resolveDetail(tx: Db, householdId: string, given: ExpenseDetail, old: Expense | undefined) {
+  const vendor = given.vendor === undefined ? (old?.vendor ?? null) : cleanText(given.vendor, "vendor");
+  const note = given.note === undefined ? (old?.note ?? null) : cleanText(given.note, "note");
+  const businessUseBp = given.businessUseBp ?? old?.businessUseBp ?? WHOLE_BP;
+  if (!Number.isInteger(businessUseBp) || businessUseBp < 1 || businessUseBp > WHOLE_BP) {
+    throw new UserError("business use is a percentage above 0 and up to 100");
+  }
+  if (businessUseBp === WHOLE_BP) return { vendor, note, businessUseBp, useBasis: null };
+  if (given.businessUseBp !== undefined) {
+    const [h] = await tx.select({ kind: household.kind }).from(household).where(eq(household.id, householdId));
+    if (h?.kind !== "business") throw new UserError("business use below 100% can be set only in a business group");
+  }
+  const useBasis = given.useBasis === undefined ? (old?.useBasis ?? null) : cleanText(given.useBasis, "reason");
+  if (!useBasis) throw new UserError("business use below 100% needs a reason: say why in one line");
+  return { vendor, note, businessUseBp, useBasis };
+}
+
+// The business part of an amount, rounded to the cent.
+export function businessPart(totalCents: number, businessUseBp: number): number {
+  return Math.round((totalCents * businessUseBp) / WHOLE_BP);
+}
+
 export type ExpenseEvent =
   // A recurring cost reached its due date.
   // `by` is set when a member entered it for a month before the cost started.
   | { kind: "template"; due: Due; by?: Member }
-  | {
+  | ({
       kind: "manual";
       actor: Member;
       date: string;
@@ -62,7 +110,7 @@ export type ExpenseEvent =
       // that one is returned (alreadyAdded) and nothing is added, so a call the
       // agent resends after a timeout does not post twice.
       retrySince?: Date;
-    }
+    } & ExpenseDetail)
   | {
       kind: "import";
       actor: Member;
@@ -81,7 +129,7 @@ export type ExpenseEvent =
       seed: string;
       replaces?: Expense;
     }
-  | {
+  | ({
       // A card transaction from a connected bank (bank.ts): posted by the
       // sync itself when the account shares everything (`auto`), or added by
       // the connection's owner from the list waiting to be sorted.
@@ -101,7 +149,7 @@ export type ExpenseEvent =
       // A split picked for this one purchase in a card review, instead of
       // the agreed rules.
       rule?: Rule;
-    }
+    } & ExpenseDetail)
   | {
       // A payment to a shared card (card-review.ts): posted by the sync when
       // it arrives (`auto`), and superseded with a smaller total when a
@@ -319,6 +367,7 @@ export async function createExpense(
         .limit(1);
       if (same) return { ...(await withShares(tx, [same.e]))[0]!, alreadyAdded: true as const };
     }
+    const detail = await resolveDetail(tx, householdId, event.kind === "manual" || event.kind === "bank" ? event : {}, old);
     const resolved = resolveSplit(await loadContext(tx, householdId), entryRequest(event, lineageId, category));
     const row = await insertResolved(
       tx,
@@ -333,6 +382,7 @@ export async function createExpense(
         totalCents: event.totalCents,
         payerId: event.payerId,
         accountId,
+        ...detail,
         status: "posted",
         source,
         supersedesId: old?.id ?? null,
@@ -653,7 +703,7 @@ export type ExpenseEdit = {
   rule?: Rule;
   // See `seed` on a manual entry.
   seed?: string;
-};
+} & ExpenseDetail;
 
 // An edit keeps the old expense as `superseded` and enters a new one that
 // points back at it. `via` is the agent token the member acted through, if any.

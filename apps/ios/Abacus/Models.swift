@@ -12,6 +12,10 @@ struct Member: Codable, Identifiable, Hashable, Sendable {
 struct Category: Codable, Identifiable, Hashable, Sendable {
     let slug: String
     let label: String
+    // The line of the tax form it reports on, like "24b"; a guide.
+    let taxLine: String?
+    // Meals: counted at half.
+    let halfDeductible: Bool
     var id: String { slug }
 }
 
@@ -59,6 +63,14 @@ struct Expense: Codable, Identifiable, Sendable {
     let date: String
     let description: String
     let category: String
+    // Who was paid and what it was for, apart from the description.
+    let vendor: String?
+    let note: String?
+    // How much of it was for the business, in basis points; 10000 is all of
+    // it. `totalCents` stays the whole amount. `useBasis` is the reason for
+    // a share below 100%.
+    let businessUseBp: Int
+    let useBasis: String?
     let totalCents: Int?
     let payerId: String
     let status: String
@@ -140,6 +152,11 @@ struct NewExpense: Encodable, Sendable {
     var date: String?
     var category: String?
     var payerId: String?
+    // Left out, the server keeps its defaults: no vendor or note, 100% business.
+    var vendor: String?
+    var note: String?
+    var businessUseBp: Int?
+    var useBasis: String?
 }
 
 struct NewSettlement: Encodable, Sendable {
@@ -182,6 +199,9 @@ struct CardLine: Codable, Identifiable, Hashable, Sendable {
     let lastFour: String?
     let institutionName: String
     let cardMode: String
+    // In a business group, whose card it is: "personal" or "business"; nil
+    // until its owner says, and a review cannot open until then.
+    let kind: String?
     let shareAll: Bool
     let reviewedThrough: String?
     let needsRelink: Bool
@@ -199,6 +219,9 @@ struct CardAccount: Codable, Identifiable, Hashable, Sendable {
     let lastFour: String?
     let institutionName: String
     let cardMode: String
+    // In a business group, whose card it is: "personal" or "business"; nil
+    // until its owner says, and a review cannot open until then.
+    let kind: String?
     let shareAll: Bool
     let reviewedThrough: String?
     let needsRelink: Bool
@@ -206,9 +229,11 @@ struct CardAccount: Codable, Identifiable, Hashable, Sendable {
     let payments: [CardPayment]
 }
 
-// The body of PATCH /accounts/{id}.
+// The body of PATCH /accounts/{id}: `cardMode` in a household, `kind`
+// ("personal" or "business") in a business group.
 struct CardModeChange: Codable, Sendable {
-    var cardMode: String
+    var cardMode: String?
+    var kind: String?
 }
 
 struct CardReviewLine: Codable, Identifiable, Hashable, Sendable {
@@ -229,6 +254,11 @@ struct CardReviewLine: Codable, Identifiable, Hashable, Sendable {
     let addedExpenseId: String?
     let suggestion: Suggestion?
     let ticked: Bool
+    // The starting tick in a business group: every purchase on a business
+    // card, none on a personal card.
+    let picked: Bool
+    // The category its row starts in: the one last logged for this merchant.
+    let category: String
     var id: String { plaidTransactionId }
 }
 
@@ -238,8 +268,13 @@ struct CardReview: Codable, Sendable {
         let name: String
         let lastFour: String?
         let cardMode: String
+        let kind: String?
     }
     let account: Card
+    // "household" or "business". A business group's review is pick, label, log.
+    let groupKind: String
+    // Whether the group has two or more members, so a purchase can be split.
+    let splits: Bool
     let from: String
     let to: String
     let payment: CardPayment?
@@ -276,6 +311,10 @@ struct CardReviewPick: Codable, Sendable {
     var description: String?
     var category: String?
     var tieTo: String?
+    var vendor: String?
+    var note: String?
+    var businessUseBp: Int?
+    var useBasis: String?
 }
 
 // The body of POST /accounts/{id}/review.

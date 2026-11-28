@@ -40,6 +40,7 @@ export const AUDIT_ACTIONS = [
   "category.removed",
   "category.renamed",
   "category.restored",
+  "category.tax_changed",
   "change_set.accepted",
   "change_set.activated",
   "change_set.proposed",

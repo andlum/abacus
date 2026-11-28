@@ -1,5 +1,5 @@
 import type { Rule } from "@abacus/core/split";
-import { cents, created, date, expenseJson, jsonBody, memberId, route, str } from "@/lib/api";
+import { cents, created, date, expenseDetail, expenseJson, jsonBody, memberId, route, str } from "@/lib/api";
 import { listExpenses, parseExpenseFilter, parseExpensePage } from "@/lib/expense-list";
 import { createExpense, postDue } from "@/lib/expenses";
 
@@ -37,6 +37,8 @@ export const POST = route(async ({ me, db, home, members, today }, req) => {
     accountId: str(b, "accountId", true) ?? null,
     // Checked by createExpense against this household's members.
     rule: (b.rule ?? undefined) as Rule | undefined,
+    // Vendor, note, and how much of it was for the business.
+    ...expenseDetail(b),
     today,
   });
   return created(expenseJson(row));

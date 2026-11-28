@@ -294,6 +294,11 @@ export const category = pgTable(
     householdId: householdRef(),
     slug: text("slug").notNull(),
     label: text("label").notNull(),
+    // The line of the tax form its costs report on, as printed there ("24b").
+    // Text, so a letter fits. A guide for the person filing, nothing more.
+    taxLine: text("tax_line"),
+    // Meals: only half counts on the tax form.
+    halfDeductible: boolean("half_deductible").notNull().default(false),
     // The column kept the name it had when removing was called archiving.
     removedAt: timestamp("archived_at", { withTimezone: true }),
     createdAt: createdAt(),
@@ -305,6 +310,7 @@ export const category = pgTable(
     check("category_slug_shape", sql`${t.slug} ~ '^[a-z0-9]+(_[a-z0-9]+)*$'`),
     check("category_label_present", sql`length(trim(${t.label})) > 0`),
     check("category_other_stays", sql`${t.slug} <> 'other' or ${t.removedAt} is null`),
+    check("category_tax_line_present", sql`${t.taxLine} is null or length(trim(${t.taxLine})) > 0`),
   ],
 );
 
@@ -572,6 +578,15 @@ export const expense = pgTable(
     date: isoDate("date").notNull(),
     description: text("description").notNull(),
     category: text("category").notNull().default(DEFAULT_CATEGORY),
+    // Who was paid, apart from the description.
+    vendor: text("vendor"),
+    // What it was for, in the person's words.
+    note: text("note"),
+    // How much of it was for the business, in basis points. The total stays
+    // the whole purchase; sums for the business count this part.
+    businessUseBp: integer("business_use_bp").notNull().default(10000),
+    // Why less than all of it was for the business. Required then.
+    useBasis: text("use_basis"),
     // Where it was paid from, when the group says. Its kind is the
     // account's kind; nothing is copied.
     accountId: uuid("account_id"),
@@ -612,6 +627,8 @@ export const expense = pgTable(
     check("expense_status", sql`${t.status} in (${inList(EXPENSE_STATUSES)})`),
     check("expense_source", sql`${t.source} in (${inList(EXPENSE_SOURCES)})`),
     check("expense_total", sql`${t.totalCents} is null or ${t.totalCents} > 0`),
+    check("expense_business_use", sql`${t.businessUseBp} between 1 and 10000`),
+    check("expense_use_basis", sql`${t.businessUseBp} = 10000 or length(trim(${t.useBasis})) > 0`),
     check("expense_total_present", sql`${t.status} = 'needs_amount' or ${t.totalCents} is not null`),
     check("expense_template_period", sql`(${t.templateLineageId} is null) = (${t.period} is null)`),
     // One live expense per recurring cost per period: makes posting safe to repeat.
@@ -761,6 +778,29 @@ export const cardPayment = pgTable(
   ],
 );
 
+// The category a group last chose for a merchant in a card review
+// (card-review.ts). It only fills in the review's label step.
+export const merchantCategory = pgTable(
+  "merchant_category",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    householdId: householdRef(),
+    // The merchant's name, lower case with single spaces.
+    merchantKey: text("merchant_key").notNull(),
+    category: text("category").notNull(),
+    lastUsedAt: timestamp("last_used_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    unique("merchant_category_household_merchant").on(t.householdId, t.merchantKey),
+    foreignKey({
+      name: "merchant_category_category_fk",
+      columns: [t.householdId, t.category],
+      foreignColumns: [category.householdId, category.slug],
+    }),
+    check("merchant_category_key_present", sql`length(${t.merchantKey}) > 0`),
+  ],
+);
+
 export const SETTLEMENT_STATUSES = ["recorded", "void"] as const;
 
 export const settlement = pgTable(
@@ -851,6 +891,7 @@ export type Reimbursement = typeof reimbursement.$inferSelect;
 export type BankConnection = typeof bankConnection.$inferSelect;
 export type BankTransaction = typeof bankTransaction.$inferSelect;
 export type CardPayment = typeof cardPayment.$inferSelect;
+export type MerchantCategory = typeof merchantCategory.$inferSelect;
 
 // A credential for the API: a phone app, or a script a self-hoster runs. It
 // acts as its member with that member's full rights, so it is not for agents;

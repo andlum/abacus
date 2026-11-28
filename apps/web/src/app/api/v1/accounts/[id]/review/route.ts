@@ -1,6 +1,6 @@
 import { UserError } from "@abacus/core/errors";
 import type { Rule } from "@abacus/core/split";
-import { idParam, jsonBody, route, str, type Body } from "@/lib/api";
+import { expenseDetail, idParam, jsonBody, route, str, type Body } from "@/lib/api";
 import { getReview, submitReview, type ReviewPick } from "@/lib/card-review";
 import { bank, expenseOut, nowFor, ownCard, reviewFrom, reviewQuery } from "../../_card/helpers";
 
@@ -14,7 +14,7 @@ export const GET = route<{ id: string }>(async (ctx, req, { id }) =>
 function pick(raw: unknown): ReviewPick {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) throw new UserError("each pick must be an object");
   const b = raw as Body;
-  const out: ReviewPick = { plaidTransactionId: str(b, "plaidTransactionId") };
+  const out: ReviewPick = { plaidTransactionId: str(b, "plaidTransactionId"), ...expenseDetail(b) };
   const description = str(b, "description", true);
   const category = str(b, "category", true);
   const tieTo = str(b, "tieTo", true);

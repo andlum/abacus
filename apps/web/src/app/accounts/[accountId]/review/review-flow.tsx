@@ -14,7 +14,17 @@ import { paymentText } from "../../card-text";
 type Person = { id: string; displayName: string };
 type Category = { slug: string; label: string };
 type Choice = "usual" | "even" | "percent" | "mine" | "theirs";
-type Edit = { description: string; category: string; choice: Choice; pct: Record<string, string> };
+type Edit = {
+  description: string;
+  category: string;
+  choice: Choice;
+  pct: Record<string, string>;
+  // A business group's label step.
+  vendor: string;
+  note: string;
+  usePct: string;
+  useBasis: string;
+};
 
 const CHOICE_TEXT: Record<Choice, string> = {
   usual: "Our usual split",
@@ -53,10 +63,28 @@ export function ReviewFlow({
 }) {
   const router = useRouter();
   const [step, setStep] = useState<"pick" | "split" | "submit">("pick");
-  const [picked, setPicked] = useState<Set<string>>(() => new Set(review.lines.filter((l) => selectable(l) && l.ticked).map((l) => l.plaidTransactionId)));
+  // A business group's review is pick, label, log; a household's is pick, split, submit.
+  const biz = review.groupKind === "business";
+  const bizCard = biz && review.account.kind === "business";
+  const splits = review.splits;
+  const [picked, setPicked] = useState<Set<string>>(
+    () => new Set(review.lines.filter((l) => selectable(l) && (biz ? l.picked : l.ticked)).map((l) => l.plaidTransactionId)),
+  );
   const [edits, setEdits] = useState<Record<string, Edit>>(() =>
     Object.fromEntries(
-      review.lines.map((l) => [l.plaidTransactionId, { description: l.description, category: defaultCategory, choice: "usual" as Choice, pct: {} }]),
+      review.lines.map((l) => [
+        l.plaidTransactionId,
+        {
+          description: l.description,
+          category: biz && categories.some((c) => c.slug === l.category) ? l.category : defaultCategory,
+          choice: "usual" as Choice,
+          pct: {},
+          vendor: l.description,
+          note: "",
+          usePct: "100",
+          useBasis: "",
+        },
+      ]),
     ),
   );
   const [error, setError] = useState<string | null>(null);
@@ -71,13 +99,25 @@ export function ReviewFlow({
   const own = pickedLines.filter((l) => !l.suggestion);
   const total = pickedLines.reduce((a, l) => a + l.amountCents, 0);
   const stillShared = review.payment?.stillSharedCents ?? 0;
-  const pickedText = `${pickedLines.length} picked · ${formatCents(total)}${shared ? ` of ${formatCents(stillShared)}` : ""}`;
+  const canPick = review.lines.filter(selectable).length;
+  const pickedText = bizCard
+    ? `${pickedLines.length} of ${canPick} are business · ${formatCents(total)}`
+    : `${pickedLines.length} picked · ${formatCents(total)}${shared ? ` of ${formatCents(stillShared)}` : ""}`;
+  const labelOf = (slug: string) => categories.find((c) => c.slug === slug)?.label ?? slug;
+
+  // How much of a row was for the business, or why it cannot be saved yet.
+  function useOf(e: Edit): { bp?: number; problem?: string } {
+    const bp = parseBp(e.usePct);
+    if (bp === null || bp < 1) return { problem: "Business use must be above 0 and up to 100." };
+    if (bp < 10000 && !e.useBasis.trim()) return { problem: "Say in one line why it is less than 100% business." };
+    return { bp };
+  }
 
   const change = (id: string, patch: Partial<Edit>) => setEdits((e) => ({ ...e, [id]: { ...e[id]!, ...patch } }));
 
   // The rule a row's choice stands for, or why it is not one yet.
   function ruleOf(e: Edit): { rule?: Rule; problem?: string } {
-    if (e.choice === "usual") return {};
+    if (!splits || e.choice === "usual") return {};
     if (e.choice === "even") return { rule: { kind: "even" } };
     if (e.choice === "mine") return { rule: { kind: "percent", bp: { [meId]: 10000 } } };
     if (e.choice === "theirs") return other ? { rule: { kind: "percent", bp: { [other.id]: 10000 } } } : { problem: "Choose who pays." };
@@ -97,7 +137,12 @@ export function ReviewFlow({
   }
 
   function toSubmit() {
-    const bad = own.map((l) => ({ l, p: ruleOf(edits[l.plaidTransactionId]!).problem })).find((x) => x.p);
+    const bad = own
+      .map((l) => {
+        const e = edits[l.plaidTransactionId]!;
+        return { l, p: ruleOf(e).problem ?? (biz ? useOf(e).problem : undefined) };
+      })
+      .find((x) => x.p);
     if (bad) {
       setError(`${bad.l.description}: ${bad.p}`);
       return;
@@ -120,7 +165,10 @@ export function ReviewFlow({
         items: pickedLines.map((l) => {
           if (l.suggestion) return { plaidTransactionId: l.plaidTransactionId, tieTo: l.suggestion.expenseId };
           const e = edits[l.plaidTransactionId]!;
-          return { plaidTransactionId: l.plaidTransactionId, description: e.description.trim(), category: e.category, rule: ruleOf(e).rule };
+          const item = { plaidTransactionId: l.plaidTransactionId, description: e.description.trim(), category: e.category, rule: ruleOf(e).rule };
+          if (!biz) return item;
+          const bp = useOf(e).bp ?? 10000;
+          return { ...item, vendor: e.vendor.trim() || null, note: e.note.trim() || null, businessUseBp: bp, useBasis: bp < 10000 ? e.useBasis.trim() : null };
         }),
       });
       // A success sends the browser to the Ledger; only a refusal answers here.
@@ -135,14 +183,14 @@ export function ReviewFlow({
       <ol className="my-4 flex list-none flex-wrap gap-2 pl-0 text-sm" aria-label="Steps">
         {(["pick", "split", "submit"] as const).map((s, i) => (
           <li key={s} aria-current={step === s ? "step" : undefined} className={step === s ? "tag ok" : "tag"}>
-            {i + 1}. {s === "pick" ? "Pick" : s === "split" ? "Split" : "Submit"}
+            {i + 1}. {s === "pick" ? "Pick" : s === "split" ? (biz ? "Label" : "Split") : biz ? "Log" : "Submit"}
           </li>
         ))}
       </ol>
 
       {step === "pick" && (
         <section aria-labelledby="pick">
-          <h2 id="pick">Pick purchases to split</h2>
+          <h2 id="pick">{bizCard ? "Untick what was personal" : biz ? "Pick the business purchases" : "Pick purchases to split"}</h2>
           <p className="note">
             {shortDate(review.from, today)} to {shortDate(review.to, today)}. Nothing is saved until the last step.
           </p>
@@ -200,7 +248,9 @@ export function ReviewFlow({
                 </div>
                 {l.moneyIn && (
                   <p className="note my-1">
-                    {l.cardPayment && review.account.cardMode === "personal"
+                    {l.cardPayment && biz
+                      ? "A payment to the card. It is not logged as a cost: the purchases are."
+                      : l.cardPayment && review.account.cardMode === "personal"
                       ? "A payment to the card. Make the card shared to share it."
                       : "Money coming in cannot be picked."}
                   </p>
@@ -219,7 +269,7 @@ export function ReviewFlow({
           </p>
           <div className="row">
             <button className="primary" disabled={pickedLines.length === 0} onClick={toSplit}>
-              Next: split
+              {biz ? "Next: label" : "Next: split"}
             </button>
             {pickedLines.length === 0 && <span className="note">Leaving with none picked changes nothing.</span>}
           </div>
@@ -228,9 +278,30 @@ export function ReviewFlow({
 
       {step === "split" && (
         <section aria-labelledby="split">
-          <h2 id="split">Choose how each one splits</h2>
+          <h2 id="split">{biz ? "Label each one" : "Choose how each one splits"}</h2>
+          {biz && (
+            <label className="max-w-xs">
+              Set all to
+              <select
+                value=""
+                onChange={(e) => {
+                  const category = e.target.value;
+                  if (!category) return;
+                  setEdits((all) => Object.fromEntries(Object.entries(all).map(([id, v]) => [id, { ...v, category }])));
+                }}
+              >
+                <option value="">Choose a category…</option>
+                {categories.map((c) => (
+                  <option key={c.slug} value={c.slug}>
+                    {c.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
+          {splits && (
           <label className="max-w-xs">
-            Set all to
+            {biz ? "Set every split to" : "Set all to"}
             <select
               value=""
               onChange={(e) => {
@@ -249,10 +320,12 @@ export function ReviewFlow({
                 ))}
             </select>
           </label>
+          )}
           <ul className="list-none divide-y divide-border/70 pl-0 space-y-0">
             {own.map((l) => {
               const e = edits[l.plaidTransactionId]!;
               const { rule, problem } = ruleOf(e);
+              const use = biz ? useOf(e) : {};
               return (
                 <li key={l.plaidTransactionId} className="py-3">
                   <div className="flex flex-wrap items-baseline justify-between gap-2">
@@ -274,18 +347,53 @@ export function ReviewFlow({
                         ))}
                       </select>
                     </label>
-                    <label>
-                      Split
-                      <select value={e.choice} onChange={(ev) => change(l.plaidTransactionId, { choice: ev.target.value as Choice })}>
-                        {choices.map((c) => (
-                          <option key={c} value={c}>
-                            {CHOICE_TEXT[c]}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
+                    {splits && (
+                      <label>
+                        Split
+                        <select value={e.choice} onChange={(ev) => change(l.plaidTransactionId, { choice: ev.target.value as Choice })}>
+                          {choices.map((c) => (
+                            <option key={c} value={c}>
+                              {CHOICE_TEXT[c]}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                    )}
                   </div>
-                  {e.choice === "percent" && (
+                  {biz && (
+                    <div className="row">
+                      <label>
+                        Vendor
+                        <input value={e.vendor} maxLength={500} onChange={(ev) => change(l.plaidTransactionId, { vendor: ev.target.value })} />
+                      </label>
+                      <label>
+                        Note
+                        <input
+                          value={e.note}
+                          maxLength={500}
+                          placeholder="What it was for"
+                          onChange={(ev) => change(l.plaidTransactionId, { note: ev.target.value })}
+                        />
+                      </label>
+                      <label>
+                        Business use %
+                        <input inputMode="decimal" size={6} value={e.usePct} onChange={(ev) => change(l.plaidTransactionId, { usePct: ev.target.value })} />
+                      </label>
+                      {use.bp !== 10000 && (
+                        <label>
+                          Why less than 100%
+                          <input
+                            value={e.useBasis}
+                            maxLength={500}
+                            placeholder="Half the calls are clients"
+                            onChange={(ev) => change(l.plaidTransactionId, { useBasis: ev.target.value })}
+                          />
+                        </label>
+                      )}
+                    </div>
+                  )}
+                  {biz && use.problem && <p className="note my-1 text-destructive">{use.problem}</p>}
+                  {splits && e.choice === "percent" && (
                     <div className="row">
                       {members.map((m) => (
                         <label key={m.id}>
@@ -304,7 +412,7 @@ export function ReviewFlow({
                   {problem ? (
                     <p className="note my-1 text-destructive">{problem}</p>
                   ) : (
-                    <RowPreview line={l} category={e.category} rule={rule} members={members} />
+                    splits && <RowPreview line={l} category={e.category} rule={rule} members={members} />
                   )}
                 </li>
               );
@@ -318,7 +426,11 @@ export function ReviewFlow({
                   <strong className="num">{formatCents(l.amountCents)}</strong>
                 </div>
                 <p className="note my-1">Already in the ledger as {l.suggestion!.name}.{" "}
-                  {l.suggestion!.kind === "added" ? "It is taken out of the payment, not added again." : "It fills that cost in; nothing new is added."}
+                  {l.suggestion!.kind === "added"
+                    ? biz
+                      ? "It is not added again."
+                      : "It is taken out of the payment, not added again."
+                    : "It fills that cost in; nothing new is added."}
                 </p>
               </li>
             ))}
@@ -339,14 +451,21 @@ export function ReviewFlow({
 
       {step === "submit" && (
         <section aria-labelledby="submit">
-          <h2 id="submit">Check and submit</h2>
+          <h2 id="submit">{biz ? "Check and log" : "Check and submit"}</h2>
           <ul className="list-none divide-y divide-border/70 pl-0 space-y-0">
             {pickedLines.map((l) => {
               const e = edits[l.plaidTransactionId]!;
+              const bp = useOf(e).bp ?? 10000;
+              const said = [
+                e.description.trim(),
+                ...(biz ? [labelOf(e.category)] : []),
+                ...(biz && bp < 10000 ? [`${bp / 100}% business`] : []),
+                ...(splits ? [CHOICE_TEXT[e.choice].toLowerCase()] : []),
+              ].join(", ");
               return (
                 <li key={l.plaidTransactionId} className="flex flex-wrap items-baseline justify-between gap-2 py-2">
                   <span className="min-w-0 [overflow-wrap:anywhere]">
-                    {l.suggestion ? `${l.description}, tied to ${l.suggestion.name}` : `${e.description.trim()}, ${CHOICE_TEXT[e.choice].toLowerCase()}`}
+                    {l.suggestion ? `${l.description}, tied to ${l.suggestion.name}` : said}
                   </span>
                   <span className="num">{formatCents(l.amountCents)}</span>
                 </li>
@@ -368,7 +487,11 @@ export function ReviewFlow({
               Back
             </button>
             <button className="primary" onClick={submit} disabled={sending}>
-              {shared ? `Split ${pickedLines.length} separately · ${formatCents(total)}` : `Add ${pickedLines.length} to the ledger · ${formatCents(total)}`}
+              {biz
+                ? `Log ${pickedLines.length} · ${formatCents(total)}`
+                : shared
+                  ? `Split ${pickedLines.length} separately · ${formatCents(total)}`
+                  : `Add ${pickedLines.length} to the ledger · ${formatCents(total)}`}
             </button>
           </div>
         </section>

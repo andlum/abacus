@@ -287,7 +287,7 @@ export async function syncConnection(db: Db, bank: BankDeps, connectionId: strin
       summary.outcome = "superseded";
       return;
     }
-    const [group] = await tx.select({ timezone: household.timezone }).from(household).where(eq(household.id, connection.householdId));
+    const [group] = await tx.select({ timezone: household.timezone, kind: household.kind }).from(household).where(eq(household.id, connection.householdId));
     const [owner] = await tx.select().from(member).where(eq(member.id, connection.ownerId));
     const today = todayIn(group!.timezone, now);
     const followed = new Map(
@@ -321,7 +321,7 @@ export async function syncConnection(db: Db, bank: BankDeps, connectionId: strin
       if (!acct.shareAll) {
         if (cents! > 0) summary.skipped.purchase++;
         else if (!isCardPayment(t)) summary.skipped.refund++;
-        else if (await recordPayment(tx, acct, owner!, { plaidTransactionId: t.transaction_id, date: t.date, amountCents: -cents! }, today)) summary.payments++;
+        else if (await recordPayment(tx, acct, owner!, { plaidTransactionId: t.transaction_id, date: t.date, amountCents: -cents! }, today, group!.kind)) summary.payments++;
         else summary.skipped.already_stored++;
         continue;
       }

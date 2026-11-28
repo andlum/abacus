@@ -8,7 +8,7 @@ import { addDays, isIsoDate, todayIn } from "@abacus/core/dates";
 import { UserError } from "@abacus/core/errors";
 import { formatCents } from "@abacus/core/money";
 import type { Rule } from "@abacus/core/split";
-import { account, bankConnection, bankTransaction, cardPayment, expense, household, type Account, type BankConnection, type CardMode, type BankTransaction, type CardPayment, type Expense, type Member } from "../db/schema.ts";
+import { account, bankConnection, bankTransaction, cardPayment, category, DEFAULT_CATEGORY, expense, household, merchantCategory, type Account, type AccountKind, type BankConnection, type CardMode, type BankTransaction, type CardPayment, type Expense, type Member } from "../db/schema.ts";
 import type { Db } from "../db/types.ts";
 import { writeAudit } from "./audit.ts";
 import { BILL_DAYS, fittingExpenses, tieTransaction } from "./bank-match.ts";
@@ -16,6 +16,7 @@ import { billSuggestions, description, isCardPayment, NEEDS_KIND, plaidCents, ty
 import { lockPayment, lockShare, setStillShared } from "./card-payments.ts";
 import { createExpense, enterAmount, isLive } from "./expenses.ts";
 import { isUuid } from "./ids.ts";
+import { householdMembers, memberIdsOn } from "./members.ts";
 import { isPlaidError, needsRelinkError, type PlaidTransaction } from "./plaid.ts";
 import { openSecret } from "./secret-box.ts";
 
@@ -46,6 +47,17 @@ async function ownCard(tx: Db, actor: Member, accountId: string, lock = false): 
   return row;
 }
 
+// Whether the card's payments are shared. Never in a business group
+// (docs/specs/2026-11-27-business-card-log.md): its cards behave as personal
+// ones whatever `card_mode` says, and their purchases are the costs.
+const isShared = (card: Card) => card.groupKind !== "business" && card.a.cardMode === "shared";
+
+// In a business group a card is the business's or the person's own, and a
+// review cannot open until that is said.
+function kindSaid(card: Card) {
+  if (card.groupKind === "business" && !card.a.kind) throw new UserError(NEEDS_KIND);
+}
+
 function reviewable(card: Card) {
   if (card.c.removedAt || !card.c.accessToken) throw new UserError("that bank is no longer connected");
   if (card.a.shareAll) throw new UserError("this card shares every purchase as it comes in; turn that off to review it");
@@ -61,6 +73,8 @@ export type CardLine = {
   lastFour: string | null;
   institutionName: string;
   cardMode: CardMode;
+  // Whose card it is, in a business group: null until its owner says.
+  kind: AccountKind | null;
   shareAll: boolean;
   reviewedThrough: string | null;
   needsRelink: boolean;
@@ -116,6 +130,7 @@ export async function listCardAccounts(db: Db, actor: Member): Promise<CardLine[
     lastFour: a.lastFour,
     institutionName: c.institutionName,
     cardMode: a.cardMode!,
+    kind: a.kind,
     shareAll: a.shareAll,
     reviewedThrough: a.reviewedThrough,
     needsRelink: c.status !== "ok",
@@ -134,6 +149,7 @@ export async function cardAccount(db: Db, actor: Member, accountId: string): Pro
     lastFour: a.lastFour,
     institutionName: c.institutionName,
     cardMode: a.cardMode!,
+    kind: a.kind,
     shareAll: a.shareAll,
     reviewedThrough: a.reviewedThrough,
     needsRelink: c.status !== "ok",
@@ -147,8 +163,9 @@ export async function cardAccount(db: Db, actor: Member, accountId: string): Pro
 // (sharePastPayment).
 export async function setCardMode(db: Db, actor: Member, accountId: string, mode: CardMode): Promise<Account> {
   return db.transaction(async (tx) => {
-    const { a, c } = await ownCard(tx, actor, accountId, true);
+    const { a, c, groupKind } = await ownCard(tx, actor, accountId, true);
     if (c.removedAt) throw new UserError("that bank is no longer connected");
+    if (groupKind === "business") throw new UserError("a business group's card is not shared or personal; say whether it is a business card or a personal one");
     if (a.cardMode === mode) return a;
     const [updated] = await tx.update(account).set({ cardMode: mode }).where(eq(account.id, a.id)).returning();
     await writeAudit(tx, {
@@ -170,9 +187,10 @@ type Range = { from: string; to: string; payment: CardPayment | null };
 // the payment before it (or REVIEW_DAYS back) to the payment's day. A
 // personal card's runs from the day after it was last reviewed (or
 // REVIEW_DAYS back) to today. `from` widens it back.
-async function rangeOf(tx: Db, a: Account, today: string, opts: { payment?: string; from?: string }, lock: boolean): Promise<Range> {
+async function rangeOf(tx: Db, card: Card, today: string, opts: { payment?: string; from?: string }, lock: boolean): Promise<Range> {
+  const { a } = card;
   let range: Range;
-  if (a.cardMode === "shared") {
+  if (isShared(card)) {
     const payments = await tx
       .select()
       .from(cardPayment)
@@ -207,6 +225,10 @@ type Fetched = {
   // Money in that is a payment to the card, not a refund.
   cardPayment: boolean;
 };
+
+// What a group remembers a merchant by: its name as the bank gives it
+// (Plaid's merchant name, else the cleaned-up one), without case or spacing.
+export const merchantKey = (name: string) => name.trim().replace(/\s+/g, " ").toLowerCase();
 
 // The card's posted dollar transactions in the range, newest first.
 async function fetchRange(bank: BankDeps, c: BankConnection, a: Account, from: string, to: string): Promise<Fetched[]> {
@@ -251,10 +273,20 @@ export type ReviewLine = Fetched & {
   suggestion: Suggestion | null;
   // Whether the page starts it ticked.
   ticked: boolean;
+  // The same, as a business group's review means it: every purchase on a
+  // business card, none on a personal one. In a household, as `ticked`.
+  picked: boolean;
+  // The category its row starts in: the one last logged for this merchant in
+  // a business group, else `other`.
+  category: string;
 };
 
 export type Review = {
-  account: { id: string; name: string; lastFour: string | null; cardMode: CardMode };
+  account: { id: string; name: string; lastFour: string | null; cardMode: CardMode; kind: AccountKind | null };
+  // The kind of group: a business's review is pick, label, log.
+  groupKind: string;
+  // Whether there is anyone to split with: the group has two or more members.
+  splits: boolean;
   from: string;
   to: string;
   payment: PaymentLine | null;
@@ -265,8 +297,9 @@ export type Review = {
 export async function getReview(db: Db, bank: BankDeps, actor: Member, accountId: string, opts: { payment?: string; from?: string }, now: Date): Promise<Review> {
   const card = await ownCard(db, actor, accountId);
   reviewable(card);
+  kindSaid(card);
   const today = todayIn(card.timezone, now);
-  const range = await rangeOf(db, card.a, today, opts, false);
+  const range = await rangeOf(db, card, today, opts, false);
   const fetched = await fetchRange(bank, card.c, card.a, range.from, range.to);
 
   const ids = fetched.map((f) => f.plaidTransactionId);
@@ -314,25 +347,44 @@ export async function getReview(db: Db, bank: BankDeps, actor: Member, accountId
     suggested.set(plaidId, { kind: "bill", expenseId: bill.expenseId, name: bill.name });
   }
 
-  const payments = card.a.cardMode === "shared" ? await paymentLines(db, actor.householdId, [card.a.id], 24) : [];
-  const shared = card.a.cardMode === "shared";
+  const shared = isShared(card);
+  const payments = shared ? await paymentLines(db, actor.householdId, [card.a.id], 24) : [];
+  const business = card.groupKind === "business";
+  const remembered = business ? await rememberedCategories(db, actor.householdId) : new Map<string, string>();
+  const members = memberIdsOn(await householdMembers(db, actor.householdId), today);
   return {
-    account: { id: card.a.id, name: card.a.name, lastFour: card.a.lastFour, cardMode: card.a.cardMode! },
+    account: { id: card.a.id, name: card.a.name, lastFour: card.a.lastFour, cardMode: business ? "personal" : card.a.cardMode!, kind: card.a.kind },
+    groupKind: card.groupKind,
+    splits: members.length > 1,
     from: range.from,
     to: range.to,
     payment: range.payment ? (payments.find((p) => p.id === range.payment!.id) ?? null) : null,
     payments,
     lines: fetched.map((f) => {
       const suggestion = suggested.get(f.plaidTransactionId) ?? null;
+      const addedExpenseId = added.get(f.plaidTransactionId) ?? null;
+      const ticked = shared && !!suggestion;
       return {
         ...f,
         moneyIn: f.amountCents < 0,
-        addedExpenseId: added.get(f.plaidTransactionId) ?? null,
+        addedExpenseId,
         suggestion,
-        ticked: shared && !!suggestion,
+        ticked,
+        picked: business ? card.a.kind === "business" && f.amountCents > 0 && !addedExpenseId : ticked,
+        category: remembered.get(merchantKey(f.description)) ?? DEFAULT_CATEGORY,
       };
     }),
   };
+}
+
+// The category last logged for each merchant, where the group still shows it.
+async function rememberedCategories(db: Db, householdId: string): Promise<Map<string, string>> {
+  const rows = await db
+    .select({ key: merchantCategory.merchantKey, slug: merchantCategory.category })
+    .from(merchantCategory)
+    .innerJoin(category, and(eq(category.householdId, merchantCategory.householdId), eq(category.slug, merchantCategory.category)))
+    .where(and(eq(merchantCategory.householdId, householdId), isNull(category.removedAt)));
+  return new Map(rows.map((r) => [r.key, r.slug]));
 }
 
 // ---- Earlier payments -------------------------------------------------------
@@ -349,7 +401,7 @@ export type PastPayment = {
 
 function sharedCard(card: Card) {
   reviewable(card);
-  if (card.a.cardMode !== "shared") throw new UserError("earlier payments can be shared only on a shared card");
+  if (!isShared(card)) throw new UserError("earlier payments can be shared only on a shared card");
 }
 
 // The card's posted payments in the last PAST_PAYMENT_DAYS, read from Plaid.
@@ -447,6 +499,12 @@ export type ReviewPick = {
   // A recurring cost or a bill waiting for its amount this purchase is:
   // tied to it rather than added as an expense of its own.
   tieTo?: string;
+  // What the expense says (expenses.ts). The vendor starts as the bank's
+  // name for the merchant; the rest as on any expense.
+  vendor?: string | null;
+  note?: string | null;
+  businessUseBp?: number;
+  useBasis?: string | null;
 };
 
 export type ReviewResult = { expenses: Expense[]; paymentExpense: Expense | null; from: string; to: string };
@@ -473,17 +531,18 @@ export async function submitReview(
 
   const first = await ownCard(db, actor, accountId);
   reviewable(first);
-  const outside = await rangeOf(db, first.a, todayIn(first.timezone, now), opts, false);
+  kindSaid(first);
+  const outside = await rangeOf(db, first, todayIn(first.timezone, now), opts, false);
   const fetched = new Map((await fetchRange(bank, first.c, first.a, outside.from, outside.to)).map((f) => [f.plaidTransactionId, f]));
 
   return db.transaction(async (tx) => {
     const card = await ownCard(tx, actor, accountId, true);
     reviewable(card);
-    if (card.groupKind === "business" && !card.a.kind) throw new UserError(NEEDS_KIND);
+    kindSaid(card);
     const today = todayIn(card.timezone, now);
     // Read again under the lock: a review submitted meanwhile may have moved
     // the range on.
-    const range = await rangeOf(tx, card.a, today, opts, true);
+    const range = await rangeOf(tx, card, today, opts, true);
     const picks = opts.items.map((i) => {
       const f = fetched.get(i.plaidTransactionId);
       if (!f || f.date < range.from || f.date > range.to) throw new UserError("one of those purchases is not on this card in the dates being reviewed");
@@ -528,7 +587,18 @@ export async function submitReview(
           today,
           seed: p.f.plaidTransactionId,
           rule: p.rule,
+          vendor: p.vendor === undefined ? p.f.description : p.vendor,
+          note: p.note,
+          businessUseBp: p.businessUseBp,
+          useBasis: p.useBasis,
         });
+        // The next review starts this merchant's rows in this category.
+        if (card.groupKind === "business") {
+          await tx
+            .insert(merchantCategory)
+            .values({ householdId: actor.householdId, merchantKey: merchantKey(p.f.description), category: e.category, lastUsedAt: now })
+            .onConflictDoUpdate({ target: [merchantCategory.householdId, merchantCategory.merchantKey], set: { category: e.category, lastUsedAt: now } });
+        }
         await tx.update(bankTransaction).set({ state: "added", expenseId: e.id, sortedBy: actor.id, sortedAt: now }).where(eq(bankTransaction.id, t.id));
         await writeAudit(tx, {
           householdId: actor.householdId,

@@ -10,7 +10,7 @@ export const GET = route(async ({ me, db, home, members, today }) => ({
   me: { ...memberJson(me), email: me.email },
   household: { id: home.id, name: home.name, kind: home.kind, timezone: home.timezone },
   members: members.map(memberJson),
-  categories: (await listCategories(db, home.id)).map((c) => ({ slug: c.slug, label: c.label })),
+  categories: (await listCategories(db, home.id)).map((c) => ({ slug: c.slug, label: c.label, taxLine: c.taxLine, halfDeductible: c.halfDeductible })),
   // Archived ones too, since older expenses name them; not offered for new.
   accounts: (await listAccounts(db, home.id, { archived: true })).map((a) => ({
     id: a.id,

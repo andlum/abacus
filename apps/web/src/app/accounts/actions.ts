@@ -29,6 +29,9 @@ export async function sharePastPaymentAction(_: ActionState, form: FormData): Pr
   });
 }
 
+// Left out stays left out; null clears.
+const text = (v: unknown) => (v === undefined ? undefined : v === null ? null : String(v));
+
 export type ReviewInput = {
   accountId: string;
   payment?: string;
@@ -48,6 +51,10 @@ export async function submitReviewAction(input: ReviewInput): Promise<ActionStat
       category: i.category === undefined ? undefined : String(i.category),
       rule: i.rule ?? undefined,
       tieTo: i.tieTo ? String(i.tieTo) : undefined,
+      vendor: text(i.vendor),
+      note: text(i.note),
+      businessUseBp: i.businessUseBp === undefined ? undefined : Number(i.businessUseBp),
+      useBasis: text(i.useBasis),
     }));
     const done = await submitReview(
       db,

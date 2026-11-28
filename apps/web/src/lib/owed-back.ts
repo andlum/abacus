@@ -18,8 +18,8 @@ export const MAX_REIMBURSEMENT_NOTE = 200;
 
 export type OwedBackEntry = {
   memberId: string;
-  // Costs with an amount (posted, or could not be split) this member paid on
-  // a personal account.
+  // The business part of costs with an amount (posted, or could not be
+  // split) this member paid on a personal account.
   personalPaidCents: number;
   // Repayments recorded to them and not voided.
   repaidCents: number;
@@ -51,7 +51,12 @@ export async function getOwedBack(db: Db, householdId: string): Promise<OwedBack
   // is read as it is now; it cannot change once an expense names the account.
   const counted = inArray(expense.status, ["posted", "unassigned"]);
   const paid = await db
-    .select({ memberId: expense.payerId, cents: sql<string>`coalesce(sum(${expense.totalCents}), 0)` })
+    // The business part of each (business_use_bp), rounded to the cent per
+    // expense: a bill half for the business is owed back by half.
+    .select({
+      memberId: expense.payerId,
+      cents: sql<string>`coalesce(sum(round(${expense.totalCents}::numeric * ${expense.businessUseBp} / 10000)), 0)`,
+    })
     .from(expense)
     .innerJoin(account, and(eq(account.householdId, expense.householdId), eq(account.id, expense.accountId)))
     .where(and(eq(expense.householdId, householdId), counted, eq(account.kind, "personal")))

@@ -256,6 +256,8 @@ export function describe(e: AuditEntry, l: Lookups): ActivityItem {
       };
     case "category.removed":
       return { ...base, text: `Removed ${catText}`, href: "/settings/categories" };
+    case "category.tax_changed":
+      return { ...base, text: `Changed the tax line of ${catText}`, href: "/settings/categories" };
     // From before categories were removed rather than archived.
     case "category.archived":
       return { ...base, text: `Archived ${catText}`, href: "/settings/categories" };
