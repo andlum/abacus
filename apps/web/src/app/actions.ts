@@ -9,9 +9,9 @@ import { recordReimbursement, voidReimbursement } from "@/lib/owed-back";
 import { disconnectBanksOf, addFromBank, connectBank, firstSyncFrom, matchBill, notThisPurchase, dismissBankTransaction, removeBankConnection, restoreBankTransaction, setShareAll } from "@/lib/bank";
 import { bankRuntime, finishRelink, requireBank, startLink, webhookUrl } from "@/lib/bank-link";
 import { addAccount, renameAccount, setAccountArchived, setAccountKind } from "@/lib/accounts";
-import { addCategory, removeCategory, renameCategory } from "@/lib/categories";
+import { addCategory, addStarterCategories, removeCategory, renameCategory, setCategoryTax } from "@/lib/categories";
 import { UserError } from "@abacus/core/errors";
-import { createExpense, editExpense, enterAmount, fixUnassigned, getExpense, postEarlier, voidExpense } from "@/lib/expenses";
+import { type ExpenseDetail, createExpense, editExpense, enterAmount, fixUnassigned, getExpense, postEarlier, voidExpense } from "@/lib/expenses";
 import { recordIncome, removeIncome, setShareMode } from "@/lib/incomes";
 import { parseCents } from "@abacus/core/money";
 import { claimInviteEmail, inviteLimits } from "@/lib/invite-limits";
@@ -80,12 +80,28 @@ export async function addExpense(_: ActionState, form: FormData): Promise<Action
       payerId: field(form, "payerId"),
       accountId: accountField(form),
       rule: readRule(form, "rule_", members) ?? undefined,
+      ...detailFields(form),
       today,
     });
     // The list of every expense, where one dated today is first; an earlier
     // one is first on the list from its date back.
     return row.date < today ? `/?to=${row.date}` : "/";
   });
+}
+
+// The vendor, note and business use of a business group's expense form
+// (detail-fields.tsx). A form without them leaves them as they are.
+function detailFields(form: FormData): ExpenseDetail {
+  if (!form.has("businessUse")) return {};
+  const pct = field(form, "businessUse");
+  if (!/^\d{1,3}(\.\d{1,2})?$/.test(pct)) throw new UserError("business use is a percentage above 0 and up to 100");
+  const businessUseBp = Math.round(Number(pct) * 100);
+  return {
+    vendor: field(form, "vendor") || null,
+    note: field(form, "note") || null,
+    businessUseBp,
+    useBasis: businessUseBp < 10000 ? field(form, "useBasis") || null : null,
+  };
 }
 
 export type PreviewAnswer = {
@@ -143,6 +159,7 @@ export async function saveExpense(_: ActionState, form: FormData): Promise<Actio
         payerId: field(form, "payerId"),
         accountId: accountField(form),
         rule: readRule(form, "rule_", members) ?? undefined,
+        ...detailFields(form),
       },
       today,
     );
@@ -399,6 +416,20 @@ export async function addCategoryAction(_: ActionState, form: FormData): Promise
 export async function renameCategoryAction(_: ActionState, form: FormData): Promise<ActionState> {
   return attempt(async ({ me, db }) => {
     await renameCategory(db, me, field(form, "slug"), field(form, "label"));
+  });
+}
+
+// Where a category goes on the tax form, and whether it counts at half.
+export async function setCategoryTaxAction(_: ActionState, form: FormData): Promise<ActionState> {
+  return attempt(async ({ me, db }) => {
+    await setCategoryTax(db, me, field(form, "slug"), { taxLine: field(form, "taxLine") || null, halfDeductible: form.get("half") === "on" });
+  });
+}
+
+// Adds the starter categories the group does not have yet.
+export async function addStarterCategoriesAction(_: ActionState, _form: FormData): Promise<ActionState> {
+  return attempt(async ({ me, db }) => {
+    await addStarterCategories(db, me);
   });
 }
 

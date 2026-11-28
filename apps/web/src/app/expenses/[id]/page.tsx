@@ -10,6 +10,7 @@ import { requireHousehold } from "@/lib/session";
 import { ActionForm } from "../../action-form";
 import { notThisPurchaseAction, saveExpense, voidExpenseAction } from "../../actions";
 import { returnTo } from "@/lib/return-to";
+import { DetailFields } from "../../detail-fields";
 import { OptionalRule } from "../../rule-fields";
 import { AccountSelect, accountText, CategorySelect, Money, PayerSelect, Shell } from "../../ui";
 import { ActivityPanel, dayIn } from "../../activity-panel";
@@ -126,6 +127,14 @@ export default async function EditExpense({
     </p>
   );
 
+  // What a business group's expense says beyond its description.
+  const said = [
+    e.vendor && `Paid to ${e.vendor}`,
+    e.note,
+    e.businessUseBp < 10000 && `${e.businessUseBp / 100}% business${e.useBasis ? `: ${e.useBasis}` : ""}`,
+  ].filter(Boolean);
+  const detailLine = said.length > 0 && <p className="[overflow-wrap:anywhere]">{said.join(". ")}.</p>;
+
   if (!live) {
     const current = history.find((v) => v.status === "posted" || v.status === "unassigned");
     return (
@@ -143,6 +152,7 @@ export default async function EditExpense({
           </p>
         )}
         {paidFromLine}
+        {detailLine}
         {tieLine}
         {historyTable}
       </Shell>
@@ -177,6 +187,7 @@ export default async function EditExpense({
           <PayerSelect members={counted} value={e.payerId} />
           <AccountSelect accounts={accounts} value={e.accountId} />
         </div>
+        {ctx.home.kind === "business" && <DetailFields vendor={e.vendor} note={e.note} businessUseBp={e.businessUseBp} useBasis={e.useBasis} />}
         <OptionalRule summary="Split this one differently" members={people} prefix="rule_" byIncome={ctx.home.kind === "household"} />
         <SplitPreview people={people} submit="Save" stored={e.shares} />
       </ActionForm>

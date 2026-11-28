@@ -13,7 +13,8 @@ export const dynamic = "force-dynamic";
 export default async function AccountsPage() {
   if (!bankRuntime()) notFound();
   const ctx = await requireHousehold();
-  const { me, db, today } = ctx;
+  const { me, db, today, home } = ctx;
+  const business = home.kind === "business";
   const cards = await listCardAccounts(db, me);
 
   return (
@@ -24,7 +25,7 @@ export default async function AccountsPage() {
         </p>
       ) : (
         <>
-          <p className="note">Your connected cards. Choose which purchases to split with the group from each.</p>
+          <p className="note">{business ? "Your connected cards. Review each to log its business purchases." : "Your connected cards. Choose which purchases to split with the group from each."}</p>
           <ul className="my-4 grid list-none gap-4 pl-0">
             {cards.map((c) => (
               <li key={c.id} className="grid gap-2 rounded-xl border border-border/70 bg-card p-4 shadow-soft">
@@ -35,7 +36,7 @@ export default async function AccountsPage() {
                   {c.needsRelink && <span className="tag warn">needs signing in again</span>}
                 </div>
                 <p className="note my-0">
-                  {c.institutionName} · {modeText(c)}
+                  {c.institutionName} · {modeText(c, business)}
                   {c.cardMode === "shared"
                     ? ` · ${c.latestPayment ? `Last payment ${paymentText(c.latestPayment, today)}` : "No payment yet"}`
                     : ` · ${c.reviewedThrough ? `Reviewed to ${shortDate(c.reviewedThrough, today)}` : "Not reviewed yet"}`}
@@ -43,9 +44,15 @@ export default async function AccountsPage() {
                 {c.shareAll && <p className="note my-0">Every purchase on this card is shared as it comes in.</p>}
                 {!c.shareAll && (
                   <div>
-                    <LinkButton href={`/accounts/${c.id}/review`} variant="outline" size="sm">
-                      Review transactions
-                    </LinkButton>
+                    {business && !c.kind ? (
+                      <LinkButton href={`/accounts/${c.id}`} variant="outline" size="sm">
+                        Say whose card this is
+                      </LinkButton>
+                    ) : (
+                      <LinkButton href={`/accounts/${c.id}/review`} variant="outline" size="sm">
+                        Review transactions
+                      </LinkButton>
+                    )}
                   </div>
                 )}
               </li>

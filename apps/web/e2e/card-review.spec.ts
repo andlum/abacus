@@ -27,7 +27,7 @@ async function signIn(page: Page, { groupExists = true } = {}) {
 // Plaid's own window cannot open here: its script is swapped for one whose
 // window signs in at once with `token` (the fake Plaid knows "shared" and
 // "personal").
-async function connect(page: Page, token: "shared" | "personal") {
+async function connect(page: Page, token: "shared" | "personal" | "business") {
   await page.route("https://cdn.plaid.com/link/v2/stable/link-initialize.js", (route) =>
     route.fulfill({
       contentType: "text/javascript",
@@ -137,4 +137,66 @@ test("a personal card: nothing reaches the Ledger until a review picks it", asyn
 
   await page.goto("/");
   await expect(ledger(page).getByRole("row").filter({ hasText: "$500.00" })).toContainText("Card payment");
+});
+
+// docs/specs/2026-11-27-business-card-log.md: a business group's review is
+// pick, label, log, with nothing to split when there is one person.
+test("a one-person business: mark the card, untick what was personal, label, log", async ({ page }) => {
+  await signIn(page);
+  const switcher = page.getByRole("button", { name: /Switch group/ });
+  await switcher.click();
+  await page.getByRole("link", { name: "Add a group" }).click();
+  await page.getByLabel("What it is").selectOption({ label: "A small business" });
+  await page.getByLabel("Name", { exact: true }).fill("Solo Works");
+  await page.getByRole("button", { name: "Add group" }).click();
+  await expect(switcher).toHaveText("Solo Works");
+
+  // The card cannot be reviewed until its owner says whose it is.
+  await connect(page, "business");
+  await expect(card(page, "Everyday Card 1234")).toContainText("Not said whose card yet");
+  await expect(card(page, "Everyday Card 1234").getByRole("link", { name: "Review transactions" })).toHaveCount(0);
+  await card(page, "Everyday Card 1234").getByRole("link", { name: "Say whose card this is" }).click();
+  await expect(page.getByRole("heading", { name: "Whose card is this?" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Shared or personal" })).toHaveCount(0);
+  await expect(page.getByRole("link", { name: "Review transactions" })).toHaveCount(0);
+  await page.getByLabel("Business card").check();
+  await page.getByRole("button", { name: "Save" }).click();
+  await expect(page.getByRole("link", { name: "Review transactions" })).toBeVisible();
+
+  // Its payment is money moving between accounts, not a cost.
+  await syncBank(page);
+  await page.goto("/");
+  await expect(ledger(page).getByRole("row").filter({ hasText: "Card payment" })).toHaveCount(0);
+
+  // Pick: everything starts ticked; the cafe was personal.
+  await page.goto("/accounts");
+  await card(page, "Everyday Card 1234").getByRole("link", { name: "Review transactions" }).click();
+  await expect(page.getByText("3 of 3 are business · $155.00")).toBeVisible();
+  await page.getByLabel(/Corner Cafe/).uncheck();
+  await expect(page.getByText("2 of 3 are business · $140.00")).toBeVisible();
+  await page.getByRole("button", { name: "Next: label" }).click();
+
+  // Label: a category, a note, and no split to choose.
+  await expect(page.getByLabel("Split")).toHaveCount(0);
+  await page.getByLabel("Set all to").selectOption({ label: "Software and subscriptions" });
+  const print = page.getByRole("listitem").filter({ hasText: "$40.00" });
+  await print.getByLabel("Category").selectOption({ label: "Advertising" });
+  await print.getByLabel("Note").fill("Flyers for the open day");
+  await page.getByRole("button", { name: "Next: check" }).click();
+
+  // Log.
+  await expect(page.getByText("Cloud Host, Software and subscriptions")).toBeVisible();
+  await expect(page.getByText("Print Shop, Advertising")).toBeVisible();
+  await page.getByRole("button", { name: "Log 2 · $140.00" }).click();
+
+  await expect(page.getByRole("heading", { name: "Ledger" })).toBeVisible();
+  await expect(ledger(page).getByRole("row").filter({ hasText: "Cloud Host" })).toContainText("$100.00");
+  await expect(ledger(page).getByRole("row").filter({ hasText: "Print Shop" })).toContainText("$40.00");
+  await expect(ledger(page).getByText("Corner Cafe")).toHaveCount(0);
+  await expect(ledger(page).getByRole("row").filter({ hasText: "Card payment" })).toHaveCount(0);
+
+  // The expense says who was paid and what it was for.
+  await ledger(page).getByRole("link", { name: "Print Shop" }).click();
+  await expect(page.getByLabel("Note")).toHaveValue("Flyers for the open day");
+  await expect(page.getByLabel("Vendor")).toHaveValue("Print Shop");
 });

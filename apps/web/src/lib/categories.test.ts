@@ -44,7 +44,24 @@ describe("starting lists", () => {
       "Subscriptions",
       "Other",
     ]);
-    expect(DEFAULT_CATEGORIES.business.map((c) => c.label)).toEqual(["Software", "Travel", "Meals", "Fees", "Other"]);
+    expect(DEFAULT_CATEGORIES.business.map((c) => c.label)).toEqual([
+      "Advertising",
+      "Car and truck",
+      "Commissions and fees",
+      "Contract labor",
+      "Insurance",
+      "Legal and professional",
+      "Office expense",
+      "Rent",
+      "Repairs",
+      "Supplies",
+      "Taxes and licenses",
+      "Travel",
+      "Meals",
+      "Utilities",
+      "Software and subscriptions",
+      "Other",
+    ]);
     for (const list of Object.values(DEFAULT_CATEGORIES)) {
       expect(list.at(-1)!.slug).toBe(DEFAULT_CATEGORY);
       expect(list.every((c) => slugFor(c.slug) === c.slug)).toBe(true);

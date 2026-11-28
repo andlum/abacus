@@ -12,4 +12,8 @@ export function paymentText(p: PaymentLine, today: string): string {
   return p.stillSharedCents === p.amountCents ? `${base}, shared whole` : `${base}, ${formatCents(p.stillSharedCents)} still shared`;
 }
 
-export const modeText = (c: Pick<CardLine, "cardMode">) => (c.cardMode === "shared" ? "Shared card" : "Personal card");
+// In a business group the card's kind is what matters: whose card it is.
+export function modeText(c: Pick<CardLine, "cardMode" | "kind">, business = false): string {
+  if (business) return c.kind === "business" ? "Business card" : c.kind === "personal" ? "Personal card" : "Not said whose card yet";
+  return c.cardMode === "shared" ? "Shared card" : "Personal card";
+}

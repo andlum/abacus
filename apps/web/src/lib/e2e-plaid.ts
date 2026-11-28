@@ -17,7 +17,7 @@ export const e2ePlaidEnabled = (env: Env = process.env) => devAuthEnabled(env) &
 // and the fake's state and sealing key must be the same ones every time.
 const held = globalThis as typeof globalThis & { __abacusE2ePlaid?: BankRuntime };
 
-// Public token "shared" connects the Everyday Card (1234) and "personal" the
+// Public token "business" is described below. Public token "shared" connects the Everyday Card (1234) and "personal" the
 // Travel Card (4321). Each card's first sync is empty and its second brings a
 // $1,200.00 payment, so the payment arrives after the person has chosen
 // shared or personal (POST /api/e2e/sync runs the second one). Purchases are
@@ -31,6 +31,7 @@ function build(): BankRuntime {
   const banks: Record<string, { name: string; card: string }> = {
     "access-shared": { name: "Shared Bank", card: "acc-card" },
     "access-personal": { name: "Personal Bank", card: "acc-travel" },
+    "access-business": { name: "Business Bank", card: "acc-card" },
   };
   fake.on("shared", "", { next_cursor: "c1" });
   fake.on("shared", "c1", { added: [payment("pay-1", 1200, { date: ago(2) })], next_cursor: "c2" });
@@ -48,6 +49,17 @@ function build(): BankRuntime {
     txn("buy-4", { account_id: "acc-travel", amount: 45, date: ago(3), merchant_name: "Bookshop" }),
     txn("buy-5", { account_id: "acc-travel", amount: 8, date: ago(1), merchant_name: "Cafe" }),
     payment("pay-2", 500, { account_id: "acc-travel", date: ago(2) }),
+  );
+  // "business" connects an Everyday Card of its own, for a business group's
+  // review: three purchases, and a $300.00 payment that must make no expense.
+  fake.on("business", "", { next_cursor: "c1" });
+  fake.on("business", "c1", { added: [payment("pay-3", 300, { date: ago(2) })], next_cursor: "c2" });
+  fake.hold(
+    "business",
+    txn("buy-6", { amount: 100, date: ago(9), merchant_name: "Cloud Host" }),
+    txn("buy-7", { amount: 40, date: ago(6), merchant_name: "Print Shop" }),
+    txn("buy-8", { amount: 15, date: ago(4), merchant_name: "Corner Cafe" }),
+    payment("pay-3", 300, { date: ago(2) }),
   );
   const plaid = {
     ...fake.plaid,

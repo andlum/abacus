@@ -7,7 +7,7 @@
 // when nothing is left; voiding a purchase taken out puts it back. The
 // payment's own amount never changes.
 import { and, eq, sql } from "drizzle-orm";
-import { account, bankConnection, bankTransaction, cardPayment, expense, member, type Account, type BankTransaction, type CardPayment, type Expense, type Member } from "../db/schema.ts";
+import { account, bankConnection, bankTransaction, cardPayment, expense, member, type Account, type BankTransaction, type CardPayment, type Expense, type GroupKind, type Member } from "../db/schema.ts";
 import type { Db } from "../db/types.ts";
 import { accountLabel } from "./accounts.ts";
 import { writeAudit, type Actor } from "./audit.ts";
@@ -23,15 +23,18 @@ async function memberById(tx: Db, id: string): Promise<Member> {
 }
 
 // Records a payment the sync found on a card. False when it was already
-// recorded. On a shared card it also posts the payment's expense.
+// recorded. On a household's shared card it also posts the payment's expense.
 export async function recordPayment(
   tx: Db,
   a: Account,
   owner: Member,
   p: { plaidTransactionId: string; date: string; amountCents: number },
   today: string,
+  groupKind: GroupKind,
 ): Promise<boolean> {
-  const mode = a.cardMode ?? "personal";
+  // A business group's card payment is money moving between accounts, never
+  // a cost: stored, and no expense, whatever `card_mode` says.
+  const mode = groupKind === "business" ? "personal" : (a.cardMode ?? "personal");
   const [row] = await tx
     .insert(cardPayment)
     .values({ householdId: a.householdId, accountId: a.id, plaidTransactionId: p.plaidTransactionId, date: p.date, amountCents: p.amountCents, mode })

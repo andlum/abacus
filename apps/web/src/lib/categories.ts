@@ -1,14 +1,20 @@
 import { and, asc, eq, sql } from "drizzle-orm";
-import { category, DEFAULT_CATEGORY, type Category, type GroupKind, type Member } from "../db/schema.ts";
+import { category, DEFAULT_CATEGORY, household, type Category, type GroupKind, type Member } from "../db/schema.ts";
 import type { Db } from "../db/types.ts";
 import { writeAudit } from "./audit.ts";
 import { UserError } from "@abacus/core/errors";
 
-type Starter = { slug: string; label: string };
+// `taxLine` is the line of the tax form the category reports on; `half` marks
+// meals, which count at half.
+type Starter = { slug: string; label: string; taxLine?: string; half?: true };
 
-// What a new group starts with, by kind. Short on purpose: a group adds its
-// own under Settings. Changing a list here changes new groups only; groups
-// that exist keep the rows they have. Every list ends with `other`.
+// What a new group starts with, by kind. A household's is short on purpose: a
+// group adds its own under Settings. A business's follows Schedule C (Form
+// 1040), part II; the line numbers were read from the 2026 form, where
+// "Other expenses" is line 27b. They are a guide and can change from year to
+// year. Changing a list here changes new groups only; groups that exist keep
+// the rows they have, and Settings offers them what they lack
+// (missingStarters). Every list ends with `other`.
 export const DEFAULT_CATEGORIES: Record<GroupKind, readonly Starter[]> = {
   household: [
     { slug: "housing", label: "Housing" },
@@ -19,10 +25,21 @@ export const DEFAULT_CATEGORIES: Record<GroupKind, readonly Starter[]> = {
     { slug: DEFAULT_CATEGORY, label: "Other" },
   ],
   business: [
-    { slug: "software", label: "Software" },
-    { slug: "travel", label: "Travel" },
-    { slug: "meals", label: "Meals" },
-    { slug: "fees", label: "Fees" },
+    { slug: "advertising", label: "Advertising", taxLine: "8" },
+    { slug: "car_and_truck", label: "Car and truck", taxLine: "9" },
+    { slug: "commissions_and_fees", label: "Commissions and fees", taxLine: "10" },
+    { slug: "contract_labor", label: "Contract labor", taxLine: "11" },
+    { slug: "insurance", label: "Insurance", taxLine: "15" },
+    { slug: "legal_and_professional", label: "Legal and professional", taxLine: "17" },
+    { slug: "office_expense", label: "Office expense", taxLine: "18" },
+    { slug: "rent", label: "Rent", taxLine: "20b" },
+    { slug: "repairs", label: "Repairs", taxLine: "21" },
+    { slug: "supplies", label: "Supplies", taxLine: "22" },
+    { slug: "taxes_and_licenses", label: "Taxes and licenses", taxLine: "23" },
+    { slug: "travel", label: "Travel", taxLine: "24a" },
+    { slug: "meals", label: "Meals", taxLine: "24b", half: true },
+    { slug: "utilities", label: "Utilities", taxLine: "25" },
+    { slug: "software", label: "Software and subscriptions", taxLine: "27b" },
     { slug: DEFAULT_CATEGORY, label: "Other" },
   ],
 };
@@ -32,8 +49,51 @@ export const DEFAULT_CATEGORIES: Record<GroupKind, readonly Starter[]> = {
 export async function seedCategories(db: Db, householdId: string, kind: GroupKind): Promise<void> {
   await db
     .insert(category)
-    .values(DEFAULT_CATEGORIES[kind].map((c) => ({ householdId, slug: c.slug, label: c.label })))
+    .values(DEFAULT_CATEGORIES[kind].map((c) => starterRow(householdId, c)))
     .onConflictDoNothing();
+}
+
+const starterRow = (householdId: string, c: Starter) => ({
+  householdId,
+  slug: c.slug,
+  label: c.label,
+  taxLine: c.taxLine ?? null,
+  halfDeductible: c.half ?? false,
+});
+
+// The starting categories of its kind that a group lacks: none of its
+// categories, removed ones included, has the slug, and none it shows has the
+// name. A group made before the list grew is offered these in Settings.
+export async function missingStarters(db: Db, householdId: string, kind: GroupKind): Promise<Starter[]> {
+  const rows = await db.select().from(category).where(eq(category.householdId, householdId));
+  const slugs = new Set(rows.map((c) => c.slug));
+  const names = new Set(rows.filter((c) => !c.removedAt).map((c) => c.label.toLowerCase()));
+  return DEFAULT_CATEGORIES[kind].filter((c) => !slugs.has(c.slug) && !names.has(c.label.toLowerCase()));
+}
+
+// Adds every starting category the actor's group lacks. What it has is left
+// as it is: its names, and its lines or lack of them.
+export async function addStarterCategories(db: Db, actor: Member): Promise<Category[]> {
+  return db.transaction(async (tx) => {
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${"abacus.category." + actor.householdId}))`);
+    const [h] = await tx.select({ kind: household.kind }).from(household).where(eq(household.id, actor.householdId));
+    const missing = await missingStarters(tx, actor.householdId, h!.kind);
+    if (missing.length === 0) return [];
+    const rows = await tx
+      .insert(category)
+      .values(missing.map((c) => ({ ...starterRow(actor.householdId, c), createdBy: actor.id })))
+      .returning();
+    for (const row of rows) {
+      await writeAudit(tx, {
+        householdId: actor.householdId,
+        actor: { kind: "member", memberId: actor.id },
+        action: "category.added",
+        entity: { type: "category", id: row.id },
+        detail: { slug: row.slug, label: row.label, ...(row.taxLine ? { taxLine: row.taxLine } : {}) },
+      });
+    }
+    return rows;
+  });
 }
 
 // A group's categories by label, with `other` last. Removed ones are left
@@ -176,5 +236,34 @@ export async function removeCategory(db: Db, actor: Member, slug: string): Promi
       entity: { type: "category", id: before.id },
       detail: { slug, label: before.label },
     });
+  });
+}
+
+const MAX_TAX_LINE = 12;
+
+// Sets where a category goes on the tax form: its line (blank for none) and
+// whether it is meals, which count at half. A guide for the year's totals;
+// which line a cost belongs on is the filer's call.
+export async function setCategoryTax(
+  db: Db,
+  actor: Member,
+  slug: string,
+  to: { taxLine: string | null; halfDeductible: boolean },
+): Promise<Category> {
+  const taxLine = (to.taxLine ?? "").trim() || null;
+  if (taxLine && taxLine.length > MAX_TAX_LINE) throw new UserError(`a tax line can be at most ${MAX_TAX_LINE} characters, like "24b"`);
+  return db.transaction(async (tx) => {
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${"abacus.category." + actor.householdId}))`);
+    const before = await find(tx, actor.householdId, slug);
+    if (before.taxLine === taxLine && before.halfDeductible === to.halfDeductible) return before;
+    const [row] = await tx.update(category).set({ taxLine, halfDeductible: to.halfDeductible }).where(eq(category.id, before.id)).returning();
+    await writeAudit(tx, {
+      householdId: actor.householdId,
+      actor: { kind: "member", memberId: actor.id },
+      action: "category.tax_changed",
+      entity: { type: "category", id: before.id },
+      detail: { slug, from: { taxLine: before.taxLine, halfDeductible: before.halfDeductible }, to: { taxLine, halfDeductible: to.halfDeductible } },
+    });
+    return row!;
   });
 }

@@ -5,7 +5,7 @@ import { bankRuntime } from "@/lib/bank-link";
 import { cardAccount } from "@/lib/card-review";
 import { requireHousehold } from "@/lib/session";
 import { ActionForm } from "../../action-form";
-import { setBankShareAllAction } from "../../actions";
+import { setAccountKindAction, setBankShareAllAction } from "../../actions";
 import { BankRelink, ToSortCard } from "../../home-bank";
 import { LinkButton, Shell } from "../../ui";
 import { setCardModeAction } from "../actions";
@@ -17,7 +17,8 @@ export default async function CardPage({ params }: { params: Promise<{ accountId
   if (!bankRuntime()) notFound();
   const { accountId } = await params;
   const ctx = await requireHousehold();
-  const { me, db, today } = ctx;
+  const { me, db, today, home } = ctx;
+  const business = home.kind === "business";
   let card;
   try {
     card = await cardAccount(db, me, accountId);
@@ -25,15 +26,40 @@ export default async function CardPage({ params }: { params: Promise<{ accountId
     if (e instanceof UserError) notFound();
     throw e;
   }
-  const shared = card.cardMode === "shared";
+  const shared = !business && card.cardMode === "shared";
+  // A business group's card is reviewed only once its owner says whose it is.
+  const canReview = !card.shareAll && (!business || card.kind !== null);
 
   return (
-    <Shell {...ctx} title={cardName(card)} actions={!card.shareAll && <LinkButton href={`/accounts/${card.id}/review`}>Review transactions</LinkButton>}>
+    <Shell {...ctx} title={cardName(card)} actions={canReview && <LinkButton href={`/accounts/${card.id}/review`}>Review transactions</LinkButton>}>
       <p className="note mt-0">
-        <Link href="/accounts">All accounts</Link> · {card.institutionName} · {modeText(card)}
+        <Link href="/accounts">All accounts</Link> · {card.institutionName} · {modeText(card, business)}
       </p>
       <BankRelink ctx={ctx} />
 
+      {business ? (
+        <section aria-labelledby="kind" className="mt-6">
+          <h2 id="kind">Whose card is this?</h2>
+          <p className="note">
+            A business card is the business&rsquo;s own: its purchases are the business&rsquo;s unless you untick them in a review. A personal card is your
+            own: nothing on it is the business&rsquo;s unless you pick it, and what you pick is a cost the business owes you back.
+            {card.kind === null && " Say which before you review this card."}
+          </p>
+          <ActionForm action={setAccountKindAction} done="Saved" resetOnError>
+            <input type="hidden" name="accountId" value={card.id} />
+            <div className="row">
+              <label className="check">
+                <input type="radio" name="kind" value="business" defaultChecked={card.kind === "business"} required /> Business card
+              </label>
+              <label className="check">
+                <input type="radio" name="kind" value="personal" defaultChecked={card.kind === "personal"} required /> Personal card
+              </label>
+              <button>Save</button>
+            </div>
+          </ActionForm>
+          <p className="note">This is fixed once anything is paid from the card. To change it after that, archive the account and add a new one.</p>
+        </section>
+      ) : (
       <section aria-labelledby="mode" className="mt-6">
         <h2 id="mode">Shared or personal</h2>
         <p className="note">
@@ -53,6 +79,7 @@ export default async function CardPage({ params }: { params: Promise<{ accountId
           </div>
         </ActionForm>
       </section>
+      )}
 
       {card.shareAll ? (
         <section aria-labelledby="share-all" className="mt-6">
@@ -100,6 +127,13 @@ export default async function CardPage({ params }: { params: Promise<{ accountId
             {card.reviewedThrough ? `Reviewed to ${card.reviewedThrough}.` : "Not reviewed yet."} Review reads the card&rsquo;s purchases from your bank and
             lets you pick the ones to add.
           </p>
+          {business && (
+            <p className="note">
+              A payment to this card is not logged as a cost: its purchases are. A card payment logged before this changed was logged whole, in the category
+              &ldquo;Card payment&rdquo;, and is still in the Ledger. Reviewing purchases from the same weeks logs that money again, so void the old payment if
+              you do.
+            </p>
+          )}
         </section>
       )}
     </Shell>

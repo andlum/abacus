@@ -11,7 +11,7 @@ import { household, member, type Expense, type Member, type Reimbursement, type 
 import type { Db } from "../db/types.ts";
 import { memberForToken } from "./api-tokens.ts";
 import { devAuthEnabled } from "./dev-auth.ts";
-import type { ExpenseWithShares } from "./expenses.ts";
+import type { ExpenseDetail, ExpenseWithShares } from "./expenses.ts";
 
 // A failure with its HTTP status. A UserError becomes a 400.
 export class ApiError extends Error {
@@ -125,6 +125,24 @@ export function cents(b: Body, key: string): number {
   return v;
 }
 
+// What an expense says beyond its amount, as far as the body gives it: a key
+// left out is left out, and null or "" clears a text. Checked by createExpense.
+export function expenseDetail(b: Body): ExpenseDetail {
+  const out: ExpenseDetail = {};
+  for (const key of ["vendor", "note", "useBasis"] as const) {
+    if (b[key] === undefined) continue;
+    if (b[key] !== null && typeof b[key] !== "string") throw new UserError(`${key} must be a string`);
+    out[key] = b[key] as string | null;
+  }
+  if (b.businessUseBp !== undefined && b.businessUseBp !== null) {
+    if (typeof b.businessUseBp !== "number" || !Number.isInteger(b.businessUseBp)) {
+      throw new UserError("businessUseBp must be a whole number of basis points: 10000 is 100%");
+    }
+    out.businessUseBp = b.businessUseBp;
+  }
+  return out;
+}
+
 export function date(b: Body, key: string, fallback?: string): string {
   const v = str(b, key, true) ?? fallback;
   if (!v || !isIsoDate(v)) throw new UserError(`${key} must be a date like 2026-01-31`);
@@ -153,6 +171,10 @@ export function expenseJson(e: ExpenseWithShares | (Expense & { shares?: Record<
     description: e.description,
     category: e.category,
     accountId: e.accountId,
+    vendor: e.vendor,
+    note: e.note,
+    businessUseBp: e.businessUseBp,
+    useBasis: e.useBasis,
     totalCents: e.totalCents,
     payerId: e.payerId,
     status: e.status,

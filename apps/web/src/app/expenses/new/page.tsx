@@ -2,6 +2,7 @@ import { MONTHS } from "@abacus/core/dates";
 import { requireHousehold } from "@/lib/session";
 import { ActionForm } from "../../action-form";
 import { addExpense } from "../../actions";
+import { DetailFields } from "../../detail-fields";
 import { OptionalRule } from "../../rule-fields";
 import { AccountSelect, CategorySelect, PayerSelect, Shell } from "../../ui";
 import { KindSwitch } from "./kind-switch";
@@ -41,6 +42,7 @@ export default async function NewExpensePage({ searchParams }: { searchParams: P
                 Date
                 <input type="date" name="date" defaultValue={today} max={today} required />
               </label>
+              {ctx.home.kind === "business" && <DetailFields />}
               {people.length > 1 && <OptionalRule summary="Split this one differently" members={people} prefix="rule_" byIncome={ctx.home.kind === "household"} />}
             </>
           }

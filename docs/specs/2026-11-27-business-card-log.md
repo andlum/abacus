@@ -2,7 +2,9 @@
 
 ## Status
 
-**Draft, 2026-11-27. Not built.** Question 4 is open; it belongs to stage 2, so stage 1 can be built.
+**Stage 1 is built, 2026-11-27** (sections 1 to 5, without receipts): see
+"As built" at the end. Stages 2 and 3 are not built. Question 4 is open; it
+belongs to stage 2.
 
 Decisions:
 
@@ -271,3 +273,43 @@ Written first, against PGlite and the fake Plaid:
   year to year.
 - **Stage 1 changes the API's expense shape.** The phone must be updated in
   the same release or it drops the new fields on an edit.
+
+## As built (stage 1)
+
+Built as written above, except where this section says otherwise.
+
+- **Software and subscriptions is line 27b, not 27a.** The line numbers were
+  checked against the 2026 Schedule C (Form 1040), part II. On that form
+  "Other expenses" is line 27b; 27a is the energy efficient commercial
+  buildings deduction. Lines 8, 9, 10, 11, 15, 17, 18, 20b, 21, 22, 23, 24a,
+  24b and 25 are as section 5 lists them. Meals (24b) is the one category
+  marked as counting at half. "Other" has no line.
+- **A business group's card reads `cardMode: "personal"`** in the API,
+  whatever is stored, and `PATCH /accounts/{id}` refuses `cardMode` there. It
+  takes `kind` instead. A household's card refuses `kind`.
+- **A review line's `category` is `other` when the merchant is new**, and in a
+  household always. `picked` equals `ticked` in a household.
+- **A review also answers `groupKind`, `splits` and `account.kind`**, so a
+  client knows which three steps to show and whether to offer a split.
+- **The vendor starts as the bank's name for the merchant** when a review
+  leaves it out. An expense added by hand has no vendor unless one is typed.
+- **Vendor, note and business use are shown only in a business group**: in
+  step 2 of its review, on Add an expense (one-time) and on the expense's
+  page. The API takes vendor and note in any group; business use below 100%
+  is refused outside a business group.
+- **Editing an expense without naming these fields keeps them.** So an older
+  phone build, or the MCP `edit_expense` tool, does not wipe them.
+- **The MCP write tools do not take the new fields.** `add_expense` and
+  `edit_expense` are unchanged; the read tools return the fields.
+- **What the business owes back rounds per expense**, half up: $33.33 at 50%
+  counts as $16.67. Money already paid back, and costs with no account, are
+  counted whole as before.
+- **Settings → Categories** shows a tax line and "Meals, at half" per
+  category in a business group, and one button that adds the starter
+  categories the group lacks. A category the group renamed to a starter's
+  name is not offered again.
+- **A household's review is unchanged** apart from hiding the split controls
+  when it has one member. Its step is still named "Split".
+- **The expense's edit page still offers "Split this one differently"** in a
+  one-person group. Only the review hides the split.
+- **Not done here:** refunds, the year view, CSV, receipts.
